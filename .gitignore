@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+
+# Test / tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# PDF Pro autosave journal sidecars (ADR 0004)
+*.pdfpro-journal
+
+# Editor/OS
+.vscode/
+.idea/
+.DS_Store
