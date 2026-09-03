@@ -15,9 +15,10 @@ dev = [
     "pytest>=8.0",
     "pytest-qt>=4.4",
 ]
-ocr = [
-    "pytesseract>=0.3.10",
-]
+# No extra Python dependency for OCR: PyMuPDF's page.get_textpage_ocr() /
+# Pixmap.pdfocr_tobytes() call Tesseract directly. The Tesseract binary +
+# language data must be installed on the machine (e.g. `apt install
+# tesseract-ocr` on Windows the equivalent installer) — see README.
 
 [project.scripts]
 pdf-pro = "app.main:main"

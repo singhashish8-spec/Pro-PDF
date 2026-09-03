@@ -36,7 +36,11 @@ source .venv/bin/activate
 pytest
 ```
 
-Requires Python 3.11+.
+Requires Python 3.11+. **For OCR** (Tools → OCR Document…, and searching scanned pages), Tesseract must also be installed and on `PATH` — PyMuPDF calls it directly, no `pip` package needed:
+- Windows: install [Tesseract-OCR](https://github.com/UB-Mannheim/tesseract/wiki) and ensure it's on `PATH`.
+- Linux: `apt install tesseract-ocr` (what this repo's dev/test environment uses).
+
+Every other feature works without it.
 
 ## Repository layout
 

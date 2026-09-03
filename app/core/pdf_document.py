@@ -69,6 +69,58 @@ class PDFDocument:
                 lines.append(tuple(line["bbox"]))
         return lines
 
+    def search_page(self, page_index: int, query: str) -> list[tuple[float, float, float, float]]:
+        """Literal text search on one page; returns match rects in PDF page space."""
+        if not query:
+            return []
+        page = self._require_doc()[page_index]
+        return [tuple(r) for r in page.search_for(query)]
+
+    # -- OCR (Blueprint v2, Section 7.6) -------------------------------------
+    def get_ocr_text(self, page_index: int, language: str = "eng") -> str:
+        """OCRs a page in memory (for searching image-only/scanned pages) without
+        modifying the document. Entirely local (bundled Tesseract via MuPDF) —
+        no document content is ever sent to a cloud OCR service (Section 3)."""
+        page = self._require_doc()[page_index]
+        textpage = page.get_textpage_ocr(flags=0, language=language, full=True)
+        return page.get_text(textpage=textpage)
+
+    def ocr_document(self, output_path: str, language: str = "eng", dpi: int = 300) -> None:
+        """OCRs every page and saves a new, text-searchable PDF (an invisible
+        text layer over the original raster content) — makes scanned pages
+        findable by Search without altering how the page looks."""
+        doc = self._require_doc()
+        out_doc = fitz.open()
+        try:
+            for page in doc:
+                pixmap = page.get_pixmap(dpi=dpi)
+                ocr_bytes = pixmap.pdfocr_tobytes(language=language)
+                with fitz.open("pdf", ocr_bytes) as page_doc:
+                    out_doc.insert_pdf(page_doc)
+            out_doc.save(output_path)
+        finally:
+            out_doc.close()
+
+    # -- find & replace (Section 7.6) -----------------------------------------
+    def replace_text_on_page(self, page_index: int, old: str, new: str, fontsize: float = 11) -> int:
+        """Redacts every occurrence of `old` and inserts `new` in its place.
+
+        Not a content-stream text edit (PDF text isn't reflowable that way
+        without a real layout engine — see the blueprint's Open Decisions Log
+        on paragraph reflow); this destroys the old glyphs via redaction and
+        draws the replacement, which is how most PDF tools implement "replace"
+        short of full in-place text editing. Returns the number of replacements.
+        """
+        page = self._require_doc()[page_index]
+        rects = page.search_for(old)
+        for rect in rects:
+            page.add_redact_annot(rect, fill=(1, 1, 1))
+        if rects:
+            page.apply_redactions()
+            for rect in rects:
+                page.insert_text((rect.x0, rect.y1 - 2), new, fontsize=fontsize, color=(0, 0, 0))
+        return len(rects)
+
     # -- rendering -----------------------------------------------------------
     def render_page(self, page_index: int, zoom: float) -> QImage:
         """Render a page to a raster QImage; this is the Glass Layer's background."""

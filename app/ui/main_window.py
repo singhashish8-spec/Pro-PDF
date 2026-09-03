@@ -134,6 +134,14 @@ class MainWindow(QMainWindow):
         self._add_pages_action(security_menu, "Export Form Data (XFDF)…", self._export_form_data)
         self._add_pages_action(security_menu, "Import Form Data (XFDF)…", self._import_form_data)
 
+        tools_menu = menu.addMenu("&Tools")
+        self._add_pages_action(tools_menu, "Search…", self._open_search)
+        self._add_pages_action(tools_menu, "Search && Redact…", self._search_and_redact)
+        tools_menu.addSeparator()
+        self._add_pages_action(tools_menu, "OCR Document…", self._ocr_document)
+        tools_menu.addSeparator()
+        self._add_pages_action(tools_menu, "Compare Documents…", self._compare_documents)
+
     def _add_pages_action(self, menu, label: str, handler) -> None:
         action = QAction(label, self)
         action.triggered.connect(handler)
@@ -315,6 +323,60 @@ class MainWindow(QMainWindow):
         for obj in objects:
             dv.command_stack.push(AddObjectCommand(dv.markup_document, obj))
         QMessageBox.information(self, "Imported", f"Imported {len(objects)} field(s) onto page {dv.current_page + 1}")
+
+    # -- tools: search, search-and-redact, OCR, compare (Section 7.6) --------
+    def _open_search(self) -> None:
+        from app.ui.panels.search_dialog import SearchDialog
+
+        dv = self._document_view
+        if not dv.pdf.is_open:
+            return
+        dialog = SearchDialog(dv.pdf, dv.go_to_page, self)
+        dialog.exec()
+
+    def _search_and_redact(self) -> None:
+        from app.services.search import search_and_redact
+
+        dv = self._document_view
+        if not dv.pdf.is_open:
+            return
+        pattern, ok = QInputDialog.getText(
+            self, "Search & Redact", "Regex pattern to redact everywhere (e.g. SSNs: \\d{3}-\\d{2}-\\d{4}):"
+        )
+        if not ok or not pattern:
+            return
+        count = search_and_redact(dv.pdf, dv.markup_document, dv.command_stack, pattern, use_regex=True)
+        QMessageBox.information(
+            self,
+            "Search & Redact",
+            f"Staged {count} redaction(s) matching that pattern — nothing is destroyed until you Save.",
+        )
+
+    def _ocr_document(self) -> None:
+        dv = self._document_view
+        if not dv.pdf.is_open:
+            return
+        out_path, _ = QFileDialog.getSaveFileName(self, "Save Searchable (OCR'd) PDF", "", "PDF files (*.pdf)")
+        if not out_path:
+            return
+        try:
+            dv.pdf.ocr_document(out_path)
+        except Exception as exc:
+            QMessageBox.critical(self, "OCR failed", str(exc))
+            return
+        QMessageBox.information(self, "OCR Complete", f"Saved a searchable copy to {out_path}")
+
+    def _compare_documents(self) -> None:
+        from app.ui.panels.compare_dialog import CompareDialog
+
+        dv = self._document_view
+        if not dv.pdf.is_open:
+            return
+        other_path, _ = QFileDialog.getOpenFileName(self, "Compare Against", "", "PDF files (*.pdf)")
+        if not other_path:
+            return
+        dialog = CompareDialog(dv.pdf, other_path, self)
+        dialog.exec()
 
     def _on_undo_state_changed(self, can_undo: bool, can_redo: bool) -> None:
         self._undo_action.setEnabled(can_undo)
