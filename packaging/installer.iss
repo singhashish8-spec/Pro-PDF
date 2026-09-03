@@ -32,7 +32,10 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
 
 [Files]
-Source: "dist\PDF Pro\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Source paths are relative to this .iss file's own directory (packaging\),
+; not the working directory ISCC is invoked from — PyInstaller's output
+; lives at the repo root's dist\, one level up.
+Source: "..\dist\PDF Pro\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
