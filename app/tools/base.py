@@ -9,10 +9,19 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Callable
 
 from app.commands.base import CommandStack
+from app.core.pdf_document import PDFDocument
 from app.models.markup import Style
 from app.models.project import MarkupDocument
+
+#: Prompts the user for text given a dialog title; returns None if cancelled.
+TextProvider = Callable[[str], "str | None"]
+#: Called with a draft MarkupObject while a tool is actively drawing, or None to clear the preview.
+PreviewCallback = Callable[["object | None"], None]
+#: Called with the selected object's id (or None) when SelectTool's selection changes.
+SelectionCallback = Callable[["str | None"], None]
 
 
 @dataclass
@@ -21,6 +30,11 @@ class ToolContext:
     command_stack: CommandStack
     page_index: int
     default_style: Style
+    pdf: PDFDocument
+    text_provider: TextProvider
+    preview_callback: PreviewCallback
+    selection_callback: SelectionCallback = lambda obj_id: None
+    author: str = "user"
 
 
 class Tool(ABC):
@@ -35,6 +49,7 @@ class Tool(ABC):
 
     def deactivate(self) -> None:
         """Called when a different tool becomes active; must leave no partial state."""
+        self.context.preview_callback(None)
 
     @abstractmethod
     def on_press(self, pdf_point: tuple[float, float]) -> None: ...

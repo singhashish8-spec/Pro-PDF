@@ -98,6 +98,23 @@ class StyleChangeCommand(Command):
         self._apply(self._old_style)
 
 
+class CompositeCommand(Command):
+    """Groups several commands into a single undo step (e.g. a text-selection
+    based markup that produces one object per intersected line)."""
+
+    def __init__(self, commands: list[Command], label: str = "Add objects") -> None:
+        self._commands = commands
+        self.label = label
+
+    def do(self) -> None:
+        for command in self._commands:
+            command.do()
+
+    def undo(self) -> None:
+        for command in reversed(self._commands):
+            command.undo()
+
+
 class CalibrateCommand(Command):
     label = "Calibrate scale"
 

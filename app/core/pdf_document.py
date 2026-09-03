@@ -59,6 +59,16 @@ class PDFDocument:
     def get_page_text(self, page_index: int) -> str:
         return self._require_doc()[page_index].get_text()
 
+    def get_text_lines(self, page_index: int) -> list[tuple[float, float, float, float]]:
+        """Line-level bounding boxes in PDF page space, for text-baseline
+        snapping (highlighter) and text-tied markup (underline/strikeout/squiggly)."""
+        page = self._require_doc()[page_index]
+        lines: list[tuple[float, float, float, float]] = []
+        for block in page.get_text("dict")["blocks"]:
+            for line in block.get("lines", []):
+                lines.append(tuple(line["bbox"]))
+        return lines
+
     # -- rendering -----------------------------------------------------------
     def render_page(self, page_index: int, zoom: float) -> QImage:
         """Render a page to a raster QImage; this is the Glass Layer's background."""

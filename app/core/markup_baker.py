@@ -10,6 +10,7 @@ from __future__ import annotations
 import pymupdf as fitz
 
 from app.models.markup import MarkupObject
+from app.tools.geometry import arrowhead_wings
 
 
 def _color_to_rgb(hex_color: str | None) -> tuple[float, float, float] | None:
@@ -43,6 +44,16 @@ def _bake_polyline(shape: "fitz.Shape", obj: MarkupObject) -> None:
     _finish(shape, obj, fill=False)
 
 
+def _bake_arrow(shape: "fitz.Shape", obj: MarkupObject) -> None:
+    if len(obj.points) < 2:
+        return
+    start, end = obj.points[0], obj.points[1]
+    wing1, wing2 = arrowhead_wings(start, end, size=10.0)
+    shape.draw_polyline([fitz.Point(*start), fitz.Point(*end)])
+    shape.draw_polyline([fitz.Point(*wing1), fitz.Point(*end), fitz.Point(*wing2)])
+    _finish(shape, obj, fill=False)
+
+
 def _bake_highlight(shape: "fitz.Shape", obj: MarkupObject) -> None:
     (x0, y0), (x1, y1) = obj.points[0], obj.points[1]
     rect = fitz.Rect(min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
@@ -51,12 +62,42 @@ def _bake_highlight(shape: "fitz.Shape", obj: MarkupObject) -> None:
     shape.finish(color=None, fill=color, fill_opacity=0.4)
 
 
+def _bake_callout(shape: "fitz.Shape", obj: MarkupObject) -> None:
+    if len(obj.points) < 2:
+        return
+    shape.draw_polyline([fitz.Point(*obj.points[0]), fitz.Point(*obj.points[1])])
+    _finish(shape, obj, fill=False)
+    if obj.text:
+        color = _color_to_rgb(obj.style.stroke_color) or (0, 0, 0)
+        shape.insert_text(fitz.Point(*obj.points[1]), obj.text, fontsize=obj.style.font_size, color=color)
+
+
 def _bake_text(shape: "fitz.Shape", obj: MarkupObject) -> None:
     if not obj.points or not obj.text:
         return
     point = fitz.Point(*obj.points[0])
     color = _color_to_rgb(obj.style.stroke_color) or (0, 0, 0)
     shape.insert_text(point, obj.text, fontsize=obj.style.font_size, color=color)
+
+
+def _bake_stamp(shape: "fitz.Shape", obj: MarkupObject) -> None:
+    if not obj.points:
+        return
+    x, y = obj.points[0]
+    lines = (obj.text or "STAMP").split("\n")
+    width = max((len(line) for line in lines), default=6) * obj.style.font_size * 0.6 + 12
+    height = len(lines) * (obj.style.font_size + 4) + 8
+    rect = fitz.Rect(x, y, x + width, y + height)
+    color = _color_to_rgb(obj.style.stroke_color) or (0.8, 0, 0)
+    shape.draw_rect(rect)
+    shape.finish(color=color, width=1.5)
+    for i, line in enumerate(lines):
+        shape.insert_text(
+            fitz.Point(x + 6, y + 6 + (i + 1) * (obj.style.font_size + 2)),
+            line,
+            fontsize=obj.style.font_size,
+            color=color,
+        )
 
 
 def _finish(shape: "fitz.Shape", obj: MarkupObject, fill: bool = True) -> None:
@@ -74,7 +115,7 @@ def _finish(shape: "fitz.Shape", obj: MarkupObject, fill: bool = True) -> None:
 _BAKERS = {
     "rectangle": _bake_rectangle,
     "ellipse": _bake_ellipse,
-    "arrow": _bake_polyline,
+    "arrow": _bake_arrow,
     "pen": _bake_polyline,
     "highlight": _bake_highlight,
     "underline": _bake_polyline,
@@ -82,8 +123,9 @@ _BAKERS = {
     "squiggly": _bake_polyline,
     "cloud": _bake_polyline,
     "textbox": _bake_text,
-    "callout": _bake_text,
+    "callout": _bake_callout,
     "note": _bake_text,
+    "stamp": _bake_stamp,
 }
 
 

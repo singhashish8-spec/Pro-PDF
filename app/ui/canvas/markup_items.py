@@ -13,6 +13,7 @@ from PyQt6.QtGui import QBrush, QColor, QFont, QPainterPath, QPen, QPolygonF
 from PyQt6.QtWidgets import (
     QGraphicsEllipseItem,
     QGraphicsItem,
+    QGraphicsItemGroup,
     QGraphicsLineItem,
     QGraphicsPathItem,
     QGraphicsPolygonItem,
@@ -22,6 +23,7 @@ from PyQt6.QtWidgets import (
 
 from app.core.coordinates import pdf_to_scene
 from app.models.markup import MarkupObject
+from app.tools.geometry import arrowhead_wings
 
 _DASH_STYLES = {"cloud", "measure_area", "measure_linear", "measure_perimeter"}
 
@@ -93,6 +95,21 @@ def _build_line_like(obj, scale) -> QGraphicsItem | None:
     return item
 
 
+def _build_arrow(obj, scale) -> QGraphicsItem | None:
+    if len(obj.points) < 2:
+        return None
+    wing1, wing2 = arrowhead_wings(obj.points[0], obj.points[1], size=10.0 / max(scale, 0.01))
+    path_points = [obj.points[0], obj.points[1], wing1, obj.points[1], wing2]
+    scene_pts = [QPointF(*pdf_to_scene(p, scale)) for p in path_points]
+    path = QPainterPath(scene_pts[0])
+    for p in scene_pts[1:]:
+        path.lineTo(p)
+    item = QGraphicsPathItem(path)
+    item.setPen(_pen(obj))
+    item.setOpacity(obj.style.opacity)
+    return item
+
+
 def _build_polygon(obj, scale) -> QGraphicsItem | None:
     pts = _scene_points(obj, scale)
     if len(pts) < 3:
@@ -130,10 +147,56 @@ def _build_text(obj, scale) -> QGraphicsItem | None:
     return item
 
 
+def _build_callout(obj, scale) -> QGraphicsItem | None:
+    if len(obj.points) < 2:
+        return _build_text(obj, scale)
+    line_item = _build_line_like(obj, scale)
+    text_item = QGraphicsSimpleTextItem(obj.text or "")
+    tx, ty = pdf_to_scene(obj.points[1], scale)
+    text_item.setPos(tx, ty)
+    text_item.setBrush(QBrush(QColor(obj.style.stroke_color)))
+    font = QFont()
+    font.setPointSizeF(max(obj.style.font_size, 1.0) * scale / 1.33)
+    text_item.setFont(font)
+    group = QGraphicsItemGroup()
+    if line_item is not None:
+        group.addToGroup(line_item)
+    group.addToGroup(text_item)
+    return group
+
+
+def _build_stamp(obj, scale) -> QGraphicsItem | None:
+    if not obj.points:
+        return None
+    lines = (obj.text or "STAMP").split("\n")
+    font_size = max(obj.style.font_size, 1.0)
+    width_chars = max((len(line) for line in lines), default=6)
+    width_pdf = width_chars * font_size * 0.6 + 12
+    height_pdf = len(lines) * (font_size + 4) + 8
+    x, y = obj.points[0]
+    x0, y0 = pdf_to_scene((x, y), scale)
+    x1, y1 = pdf_to_scene((x + width_pdf, y + height_pdf), scale)
+
+    group = QGraphicsItemGroup()
+    rect_item = QGraphicsRectItem(x0, y0, x1 - x0, y1 - y0)
+    color = QColor(obj.style.stroke_color or "#CC0000")
+    rect_item.setPen(QPen(color, 1.5))
+    group.addToGroup(rect_item)
+
+    text_item = QGraphicsSimpleTextItem("\n".join(lines))
+    text_item.setPos(x0 + 4 * scale, y0 + 2 * scale)
+    text_item.setBrush(QBrush(color))
+    font = QFont()
+    font.setPointSizeF(font_size * scale / 1.33)
+    text_item.setFont(font)
+    group.addToGroup(text_item)
+    return group
+
+
 _BUILDERS = {
     "rectangle": _build_rectangle,
     "ellipse": _build_ellipse,
-    "arrow": _build_line_like,
+    "arrow": _build_arrow,
     "pen": _build_line_like,
     "highlight": _build_highlight,
     "underline": _build_line_like,
@@ -145,8 +208,9 @@ _BUILDERS = {
     "measure_area": _build_polygon,
     "redaction": _build_rectangle,
     "textbox": _build_text,
-    "callout": _build_text,
+    "callout": _build_callout,
     "note": _build_text,
+    "stamp": _build_stamp,
 }
 
 

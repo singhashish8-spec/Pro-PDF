@@ -4,7 +4,10 @@ Glass Layer canvas (Blueprint v2, Phase 2)."""
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
+    QButtonGroup,
+    QComboBox,
     QHBoxLayout,
     QLabel,
     QSpinBox,
@@ -18,9 +21,42 @@ from app.core.pdf_document import PDFDocument
 from app.models.markup import MarkupObject
 from app.models.project import MarkupDocument
 from app.persistence import autosave
+from app.tools.arrow import ArrowTool
 from app.tools.base import Tool, ToolContext
+from app.tools.callout import CalloutTool
+from app.tools.cloud import CloudTool
+from app.tools.ellipse import EllipseTool
+from app.tools.eraser import EraserTool
+from app.tools.highlighter import HighlighterTool
+from app.tools.note import NoteTool
+from app.tools.pen import PenTool
+from app.tools.rectangle import RectangleTool
+from app.tools.select_tool import SelectTool
+from app.tools.squiggly import SquigglyTool
+from app.tools.stamp import STAMP_PRESETS, StampTool
+from app.tools.strikeout import StrikeoutTool
+from app.tools.textbox import TextBoxTool
+from app.tools.underline import UnderlineTool
 from app.ui.canvas.glass_scene import GlassScene
 from app.ui.canvas.pdf_view import PdfGraphicsView
+
+_DRAFTING_TOOLS = [
+    ("Select", SelectTool, "S"),
+    ("Rectangle", RectangleTool, "R"),
+    ("Ellipse", EllipseTool, "O"),
+    ("Arrow", ArrowTool, "A"),
+    ("Pen", PenTool, "P"),
+    ("Highlight", HighlighterTool, "H"),
+    ("Underline", UnderlineTool, "U"),
+    ("Strikeout", StrikeoutTool, "K"),
+    ("Squiggly", SquigglyTool, "G"),
+    ("Note", NoteTool, "N"),
+    ("Stamp", StampTool, "M"),
+    ("Text", TextBoxTool, "T"),
+    ("Callout", CalloutTool, "C"),
+    ("Cloud", CloudTool, "L"),
+    ("Eraser", EraserTool, "E"),
+]
 
 
 class DocumentView(QWidget):
@@ -45,15 +81,33 @@ class DocumentView(QWidget):
         self.view.scene_released.connect(self._on_scene_released)
 
         self._build_toolbar()
+        self._build_tool_palette()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(self._toolbar)
-        layout.addWidget(self.view, 1)
+
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        body.addWidget(self._tool_palette)
+        body.addWidget(self.view, 1)
+        layout.addLayout(body, 1)
 
         self.markup_document.add_listener(self._refresh_markups)
         self.command_stack.add_listener(self._on_stack_changed)
+
+        self._select_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
+        self._select_shortcut.activated.connect(self._on_escape)
+        self._delete_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Delete), self)
+        self._delete_shortcut.activated.connect(self._on_delete_key)
+        self._backspace_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Backspace), self)
+        self._backspace_shortcut.activated.connect(self._on_delete_key)
+        self._finish_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Return), self)
+        self._finish_shortcut.activated.connect(self._on_finish_key)
+        self._finish_shortcut2 = QShortcut(QKeySequence(Qt.Key.Key_Enter), self)
+        self._finish_shortcut2.activated.connect(self._on_finish_key)
 
     def _build_toolbar(self) -> None:
         self._toolbar = QWidget()
@@ -94,6 +148,55 @@ class DocumentView(QWidget):
         zoom_in.clicked.connect(lambda: self._on_zoom_requested(self.view.zoom * 1.15))
         bar.addWidget(zoom_in)
 
+    def _build_tool_palette(self) -> None:
+        self._tool_palette = QWidget()
+        self._tool_palette.setObjectName("RightPanel")
+        self._tool_palette.setFixedWidth(56)
+        column = QVBoxLayout(self._tool_palette)
+        column.setContentsMargins(4, 4, 4, 4)
+        column.setSpacing(2)
+
+        self._tool_buttons: dict[type, QToolButton] = {}
+        group = QButtonGroup(self._tool_palette)
+        group.setExclusive(True)
+        for label, tool_cls, shortcut in _DRAFTING_TOOLS:
+            btn = QToolButton()
+            btn.setText(label[:2])
+            btn.setToolTip(f"{label} ({shortcut})")
+            btn.setCheckable(True)
+            btn.clicked.connect(lambda _checked, tc=tool_cls: self.select_tool(tc))
+            column.addWidget(btn)
+            group.addButton(btn)
+            self._tool_buttons[tool_cls] = btn
+        column.addStretch(1)
+
+        self._stamp_preset_combo = QComboBox()
+        self._stamp_preset_combo.addItems(STAMP_PRESETS)
+        self._stamp_preset_combo.setToolTip("Stamp preset")
+        column.addWidget(self._stamp_preset_combo)
+
+    def select_tool(self, tool_cls: type[Tool]) -> None:
+        btn = self._tool_buttons.get(tool_cls)
+        if btn is not None:
+            btn.setChecked(True)
+        kwargs = {}
+        if tool_cls is StampTool:
+            kwargs["preset"] = self._stamp_preset_combo.currentText()
+        self.activate_tool(tool_cls, **kwargs)
+
+    def _on_escape(self) -> None:
+        if isinstance(self._active_tool, CloudTool):
+            self._active_tool.cancel()
+        self.select_tool(SelectTool)
+
+    def _on_finish_key(self) -> None:
+        if isinstance(self._active_tool, CloudTool):
+            self._active_tool.finish()
+
+    def _on_delete_key(self) -> None:
+        if isinstance(self._active_tool, SelectTool):
+            self._active_tool.delete_selected()
+
     # -- loading -----------------------------------------------------------
     def load(self, path: str, password: str | None = None) -> bool:
         """Opens the PDF. Returns True if a crash-recovery journal exists and
@@ -109,6 +212,7 @@ class DocumentView(QWidget):
             self._page_spin.blockSignals(False)
             self._page_count_label.setText(f"/ {self.pdf.page_count}")
             self.go_to_page(0)
+            self.select_tool(SelectTool)
         finally:
             self._suspend_autosave = False
         return has_journal
@@ -178,6 +282,16 @@ class DocumentView(QWidget):
         if tool is not None:
             tool.activate()
 
+    def activate_tool(self, tool_cls: type[Tool], **kwargs) -> Tool:
+        """Constructs `tool_cls` with a fresh ToolContext (current page) and activates it."""
+        tool = tool_cls(self.make_tool_context(), **kwargs)
+        self.set_active_tool(tool)
+        return tool
+
+    @property
+    def active_tool(self) -> Tool | None:
+        return self._active_tool
+
     def make_tool_context(self) -> ToolContext:
         from app.models.markup import Style
 
@@ -186,7 +300,16 @@ class DocumentView(QWidget):
             command_stack=self.command_stack,
             page_index=self._page_index,
             default_style=Style(),
+            pdf=self.pdf,
+            text_provider=self.prompt_for_text,
+            preview_callback=self.scene.set_preview,
         )
+
+    def prompt_for_text(self, title: str) -> str | None:
+        from PyQt6.QtWidgets import QInputDialog
+
+        text, ok = QInputDialog.getMultiLineText(self, title, "Text:")
+        return text if ok else None
 
     def _on_scene_pressed(self, x: float, y: float) -> None:
         if self._active_tool:

@@ -21,6 +21,7 @@ class GlassScene(QGraphicsScene):
         self._background_item.setZValue(-1000)
         self.addItem(self._background_item)
         self._markup_items: dict[str, object] = {}
+        self._preview_item = None
         self.scale_factor: float = 1.0
 
     def set_page_image(self, image, scale_factor: float) -> None:
@@ -38,6 +39,17 @@ class GlassScene(QGraphicsScene):
             if item is not None:
                 self.addItem(item)
                 self._markup_items[obj.id] = item
+
+    def set_preview(self, obj: MarkupObject | None) -> None:
+        if self._preview_item is not None:
+            self.removeItem(self._preview_item)
+            self._preview_item = None
+        if obj is not None:
+            item = build_graphics_item(obj, self.scale_factor)
+            if item is not None:
+                item.setOpacity(max(item.opacity(), 0.6))
+                self.addItem(item)
+                self._preview_item = item
 
     def scene_point_to_pdf(self, x: float, y: float):
         return scene_to_pdf((x, y), self.scale_factor)
