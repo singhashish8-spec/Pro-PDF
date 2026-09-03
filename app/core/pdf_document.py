@@ -162,7 +162,22 @@ class PDFDocument:
         for obj in markup_objects:
             by_page[obj.page_index].append(obj)
 
-        export_doc = fitz.open(stream=doc.write(), filetype="pdf")
+        # Snapshot the structural (unbaked) state now, in bytes — this is what
+        # self._doc gets reopened from below if we're overwriting the file
+        # it's currently reading from, so the Glass Layer invariant (Section
+        # 6.4: the open document never carries baked-in markups) holds either way.
+        structural_bytes = doc.write()
+        # On Windows, fitz's own open handle on `output_path` (if we're saving
+        # over the same file this document was opened from) blocks another
+        # handle from replacing it — close it for the duration of the write
+        # and reopen after, rather than leaving Save broken on the only
+        # platform v1 targets (Section 8).
+        overwriting_open_file = output_path == self.path
+        if overwriting_open_file:
+            doc.close()
+            self._doc = None
+
+        export_doc = fitz.open(stream=structural_bytes, filetype="pdf")
         try:
             for page_index, objects in by_page.items():
                 if 0 <= page_index < export_doc.page_count:
@@ -179,6 +194,8 @@ class PDFDocument:
                 export_doc.save(output_path)
         finally:
             export_doc.close()
+            if overwriting_open_file:
+                self._doc = fitz.open(stream=structural_bytes, filetype="pdf")
 
     # -- page management (Blueprint v2, Section 7.4) -------------------------
     def insert_blank_page(self, index: int) -> None:

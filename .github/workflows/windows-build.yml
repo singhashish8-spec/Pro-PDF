@@ -28,6 +28,9 @@ jobs:
           pip install -e ".[dev]"
           pip install pyinstaller
 
+      - name: Install Tesseract (for the test suite's OCR tests)
+        run: choco install tesseract -y --no-progress
+
       - name: Run test suite
         env:
           QT_QPA_PLATFORM: offscreen

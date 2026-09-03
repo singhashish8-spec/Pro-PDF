@@ -14,6 +14,7 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-qt>=4.4",
+    "pytest-timeout>=2.3",
 ]
 # No extra Python dependency for OCR: PyMuPDF's page.get_textpage_ocr() /
 # Pixmap.pdfocr_tobytes() call Tesseract directly. The Tesseract binary +
@@ -32,3 +33,7 @@ include = ["app*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# A test that hangs (e.g. an accidental blocking QMessageBox.exec() with no
+# one to click it — this has happened twice in this codebase, see
+# docs/progress.md) fails fast and visibly instead of hanging the whole run.
+timeout = 20

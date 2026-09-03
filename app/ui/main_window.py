@@ -416,7 +416,9 @@ class MainWindow(QMainWindow):
     def _save(self) -> None:
         if not self._current_path:
             return
-        self._export_to(self._current_path)
+        # A plain Save is frequent (Ctrl+S) — confirm in the status bar, not a
+        # blocking dialog the user has to dismiss every time.
+        self._export_to(self._current_path, confirm=self.statusBar().showMessage)
 
     def _save_as(self) -> None:
         if not self._current_path:
@@ -425,7 +427,7 @@ class MainWindow(QMainWindow):
         if path:
             self._export_to(path)
 
-    def _export_to(self, path: str) -> None:
+    def _export_to(self, path: str, confirm=None) -> None:
         if path == self._document_view.pdf.path:
             self._document_view.notify_saving()
         try:
@@ -434,4 +436,8 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Could not save file", str(exc))
             return
         self._document_view.discard_journal()
-        QMessageBox.information(self, "Saved", f"Saved to {path}")
+        message = f"Saved to {path}"
+        if confirm is not None:
+            confirm(message, 4000)
+        else:
+            QMessageBox.information(self, "Saved", message)
