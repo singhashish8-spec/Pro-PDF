@@ -85,7 +85,14 @@ class PDFDocument:
         return (w * scale, h * scale)
 
     # -- save/export pipeline (Section 6.4) ---------------------------------
-    def export(self, output_path: str, markup_objects: list[MarkupObject]) -> None:
+    def export(
+        self,
+        output_path: str,
+        markup_objects: list[MarkupObject],
+        user_password: str | None = None,
+        owner_password: str | None = None,
+        permissions: int | None = None,
+    ) -> None:
         """Bakes every markup object into a copy of the currently open document
         and saves it — including any in-place structural edits from this
         session (page insert/delete/rotate/reorder, watermark, Bates,
@@ -93,6 +100,10 @@ class PDFDocument:
 
         The document open for editing itself is untouched — the Glass Layer
         stays the working document until this is called.
+
+        Password protection (Section 7.5): pass `user_password` to require a
+        password to open the file, and/or `owner_password` + `permissions`
+        (an OR of `fitz.PDF_PERM_*` flags) to restrict what an opener can do.
         """
         doc = self._require_doc()
         by_page: dict[int, list[MarkupObject]] = defaultdict(list)
@@ -104,7 +115,16 @@ class PDFDocument:
             for page_index, objects in by_page.items():
                 if 0 <= page_index < export_doc.page_count:
                     bake_page(export_doc[page_index], objects)
-            export_doc.save(output_path)
+            if user_password or owner_password:
+                export_doc.save(
+                    output_path,
+                    encryption=fitz.PDF_ENCRYPT_AES_256,
+                    user_pw=user_password or "",
+                    owner_pw=owner_password or user_password or "",
+                    permissions=permissions if permissions is not None else fitz.PDF_PERM_PRINT | fitz.PDF_PERM_COPY,
+                )
+            else:
+                export_doc.save(output_path)
         finally:
             export_doc.close()
 

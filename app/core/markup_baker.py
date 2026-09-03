@@ -133,6 +133,22 @@ def _bake_stamp(shape: "fitz.Shape", obj: MarkupObject) -> None:
         )
 
 
+def _bake_signature(shape: "fitz.Shape", obj: MarkupObject) -> None:
+    """A drawn signature (>=2 points) bakes as a stroke; a typed one (single
+    point + text) bakes as italic text (Blueprint v2, Section 7.1)."""
+    if len(obj.points) >= 2:
+        _bake_polyline(shape, obj)
+    elif obj.points and obj.text:
+        color = _color_to_rgb(obj.style.stroke_color) or (0, 0, 0.5)
+        shape.insert_text(
+            fitz.Point(*obj.points[0]),
+            obj.text,
+            fontsize=max(obj.style.font_size, 16),
+            fontname="Helvetica-Oblique",
+            color=color,
+        )
+
+
 def _finish(shape: "fitz.Shape", obj: MarkupObject, fill: bool = True) -> None:
     color = _color_to_rgb(obj.style.stroke_color) or (0, 0, 0)
     fill_color = _color_to_rgb(obj.style.fill_color) if fill else None
@@ -165,13 +181,78 @@ _BAKERS = {
     "callout": _bake_callout,
     "note": _bake_text,
     "stamp": _bake_stamp,
+    "signature": _bake_signature,
+}
+
+#: AcroForm field types (Section 7.3) — baked as real fitz.Widget objects at
+#: the page level, not via the Shape drawing API the rest of _BAKERS uses.
+_WIDGET_FIELD_MAP = {
+    "text_field": fitz.PDF_WIDGET_TYPE_TEXT,
+    "checkbox": fitz.PDF_WIDGET_TYPE_CHECKBOX,
+    "radio_button": fitz.PDF_WIDGET_TYPE_RADIOBUTTON,
+    "date_field": fitz.PDF_WIDGET_TYPE_TEXT,
+    "dropdown": fitz.PDF_WIDGET_TYPE_COMBOBOX,
+    "signature_field": fitz.PDF_WIDGET_TYPE_SIGNATURE,
 }
 
 
+def _bake_widget(page: "fitz.Page", obj: MarkupObject) -> None:
+    if len(obj.points) < 2:
+        return
+    (x0, y0), (x1, y1) = obj.points[0], obj.points[1]
+    rect = fitz.Rect(min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+    name, _, extra = (obj.text or "field").partition("\n")
+
+    widget = fitz.Widget()
+    widget.rect = rect
+    widget.field_name = name.strip() or f"field_{obj.id[:8]}"
+    widget.field_type = _WIDGET_FIELD_MAP[obj.type]
+
+    if obj.type in ("text_field", "date_field"):
+        widget.field_value = extra
+        if obj.type == "date_field":
+            widget.text_format = fitz.PDF_WIDGET_TX_FORMAT_DATE
+    elif obj.type in ("checkbox", "radio_button"):
+        widget.field_value = False
+    elif obj.type == "dropdown":
+        options = [o.strip() for o in extra.split(",") if o.strip()] or ["Option 1"]
+        widget.choice_values = options
+        widget.field_value = options[0]
+
+    page.add_widget(widget)
+
+
+def _bake_redaction(page: "fitz.Page", obj: MarkupObject) -> None:
+    """Actually destroys the underlying content, not just visually covers it
+    (Blueprint v2, Section 7.5 / 11.3 — non-negotiable). `apply_redactions()`
+    is called once for the whole page by `bake_page`, after every redaction
+    annotation for that page has been added."""
+    if len(obj.points) < 2:
+        return
+    (x0, y0), (x1, y1) = obj.points[0], obj.points[1]
+    rect = fitz.Rect(min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+    fill = _color_to_rgb(obj.style.fill_color) or (0, 0, 0)
+    page.add_redact_annot(rect, fill=fill)
+
+
 def bake_page(page: "fitz.Page", objects: list[MarkupObject]) -> None:
+    redactions = [o for o in objects if o.type == "redaction"]
+    widgets = [o for o in objects if o.type in _WIDGET_FIELD_MAP]
+    drawn = [o for o in objects if o.type != "redaction" and o.type not in _WIDGET_FIELD_MAP]
+
+    # Redact first so the underlying content is gone before anything else is
+    # drawn — and so other markups aren't themselves erased by the redaction.
+    if redactions:
+        for obj in redactions:
+            _bake_redaction(page, obj)
+        page.apply_redactions()
+
     shape = page.new_shape()
-    for obj in objects:
+    for obj in drawn:
         baker = _BAKERS.get(obj.type)
         if baker is not None:
             baker(shape, obj)
     shape.commit()
+
+    for obj in widgets:
+        _bake_widget(page, obj)

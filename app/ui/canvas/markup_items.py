@@ -221,6 +221,37 @@ def _build_count_marker(obj, scale) -> QGraphicsItem | None:
     return group
 
 
+def _build_signature(obj, scale) -> QGraphicsItem | None:
+    if len(obj.points) >= 2:
+        return _build_line_like(obj, scale)
+    if obj.points and obj.text:
+        item = _build_text(obj, scale)
+        if item is not None:
+            font = item.font()
+            font.setItalic(True)
+            item.setFont(font)
+        return item
+    return None
+
+
+def _build_form_widget(obj, scale) -> QGraphicsItem | None:
+    """Placeholder rendering for AcroForm fields on the canvas — a dashed box
+    with the field name, since the real widget only exists once baked."""
+    item = _build_rectangle(obj, scale)
+    if item is None:
+        return None
+    item.setPen(QPen(QColor(obj.style.stroke_color or "#495057"), 1, Qt.PenStyle.DashLine))
+    name = (obj.text or "").split("\n", 1)[0]
+    if not name:
+        return item
+    x0, y0 = pdf_to_scene(obj.points[0], scale)
+    label = _label_item(name, QPointF(x0 + 2, y0), obj, scale)
+    group = QGraphicsItemGroup()
+    group.addToGroup(item)
+    group.addToGroup(label)
+    return group
+
+
 def _build_stamp(obj, scale) -> QGraphicsItem | None:
     if not obj.points:
         return None
@@ -270,6 +301,13 @@ _BUILDERS = {
     "callout": _build_callout,
     "note": _build_text,
     "stamp": _build_stamp,
+    "signature": _build_signature,
+    "text_field": _build_form_widget,
+    "checkbox": _build_form_widget,
+    "radio_button": _build_form_widget,
+    "date_field": _build_form_widget,
+    "dropdown": _build_form_widget,
+    "signature_field": _build_form_widget,
 }
 
 

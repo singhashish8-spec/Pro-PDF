@@ -312,3 +312,52 @@ def test_watermark_bates_header_footer_apply_without_error(qapp, make_pdf):
     view.apply_header_footer("Header", "Footer")
     # A subsequent export should succeed and reflect the in-memory changes.
     view.pdf.close()
+
+
+def test_redaction_tool_via_palette_and_shortcuts(qapp, make_pdf):
+    from app.tools.redaction_tool import RedactionTool
+
+    path = make_pdf(page_count=1, text="TOP SECRET")
+    view = DocumentView()
+    view.load(path)
+
+    view.select_tool(RedactionTool)
+    assert isinstance(view.active_tool, RedactionTool)
+    assert view._tool_buttons[RedactionTool].isChecked()
+
+    view.active_tool.on_press((50, 55))
+    view.active_tool.on_release((250, 90))
+    obj = view.markup_document.all_objects()[0]
+    assert obj.type == "redaction"
+
+    out = str(view.pdf.path) + ".redacted.pdf"
+    view.pdf.export(out, view.markup_document.all_objects())
+
+    import pymupdf as fitz
+
+    check = fitz.open(out)
+    assert "TOP SECRET" not in check[0].get_text()
+    check.close()
+    view.pdf.close()
+
+
+def test_signature_and_form_field_tools_reachable_from_palette(qapp, make_pdf):
+    from app.tools.signature_tool import SignatureTool
+    from app.tools.text_field import TextFieldTool
+
+    path = make_pdf(page_count=1)
+    view = DocumentView()
+    view.load(path)
+
+    view.prompt_for_text = lambda title: "field_name"
+    view.select_tool(TextFieldTool)
+    view.active_tool.on_press((10, 10))
+    view.active_tool.on_release((150, 30))
+    assert view.markup_document.all_objects()[0].type == "text_field"
+
+    view.prompt_for_text = lambda title: "Signed"
+    view.select_tool(SignatureTool)
+    view.active_tool.on_press((10, 100))
+    view.active_tool.on_release((10, 100))
+    assert any(o.type == "signature" for o in view.markup_document.all_objects())
+    view.pdf.close()

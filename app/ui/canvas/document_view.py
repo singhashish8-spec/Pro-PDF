@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
     QLabel,
+    QScrollArea,
     QSpinBox,
     QToolButton,
     QVBoxLayout,
@@ -25,7 +26,10 @@ from app.tools.arrow import ArrowTool
 from app.tools.base import Tool, ToolContext
 from app.tools.calibration_tool import CalibrationTool
 from app.tools.callout import CalloutTool
+from app.tools.checkbox import CheckboxTool
 from app.tools.cloud import CloudTool
+from app.tools.date_field import DateFieldTool
+from app.tools.dropdown import DropdownTool
 from app.tools.ellipse import EllipseTool
 from app.tools.eraser import EraserTool
 from app.tools.highlighter import HighlighterTool
@@ -37,11 +41,16 @@ from app.tools.measure_perimeter import MeasurePerimeterTool
 from app.tools.measure_radius import MeasureRadiusTool
 from app.tools.note import NoteTool
 from app.tools.pen import PenTool
+from app.tools.radio_button import RadioButtonTool
 from app.tools.rectangle import RectangleTool
+from app.tools.redaction_tool import RedactionTool
 from app.tools.select_tool import SelectTool
+from app.tools.signature_field import SignatureFieldTool
+from app.tools.signature_tool import SignatureTool
 from app.tools.squiggly import SquigglyTool
 from app.tools.stamp import STAMP_PRESETS, StampTool
 from app.tools.strikeout import StrikeoutTool
+from app.tools.text_field import TextFieldTool
 from app.tools.textbox import TextBoxTool
 from app.tools.underline import UnderlineTool
 from app.ui.canvas.glass_scene import GlassScene
@@ -76,6 +85,17 @@ _MEASUREMENT_TOOLS = [
     ("Diameter", MeasureDiameterTool, "Shift+D"),
     ("Radius", MeasureRadiusTool, "Shift+R"),
     ("Count", MeasureCountTool, "Shift+N"),
+]
+
+_FORM_AND_SECURITY_TOOLS = [
+    ("Text Field", TextFieldTool, "Shift+T"),
+    ("Checkbox", CheckboxTool, "Shift+X"),
+    ("Radio Button", RadioButtonTool, "Shift+B"),
+    ("Date Field", DateFieldTool, "Shift+E"),
+    ("Dropdown", DropdownTool, "Shift+O"),
+    ("Signature Field", SignatureFieldTool, "Shift+G"),
+    ("Signature", SignatureTool, "Shift+S"),
+    ("Redact", RedactionTool, "Ctrl+Shift+R"),
 ]
 
 #: Tools that build up a shape across several clicks, finished with Return/Enter
@@ -197,17 +217,16 @@ class DocumentView(QWidget):
         bar.addWidget(tool_chest_btn)
 
     def _build_tool_palette(self) -> None:
-        self._tool_palette = QWidget()
-        self._tool_palette.setObjectName("RightPanel")
-        self._tool_palette.setFixedWidth(56)
-        column = QVBoxLayout(self._tool_palette)
+        inner = QWidget()
+        inner.setObjectName("RightPanel")
+        column = QVBoxLayout(inner)
         column.setContentsMargins(4, 4, 4, 4)
         column.setSpacing(2)
 
         self._tool_buttons: dict[type, QToolButton] = {}
-        group = QButtonGroup(self._tool_palette)
+        group = QButtonGroup(inner)
         group.setExclusive(True)
-        for label, tool_cls, shortcut in _DRAFTING_TOOLS + _MEASUREMENT_TOOLS:
+        for label, tool_cls, shortcut in _DRAFTING_TOOLS + _MEASUREMENT_TOOLS + _FORM_AND_SECURITY_TOOLS:
             btn = QToolButton()
             btn.setText(label[:2])
             btn.setToolTip(f"{label} ({shortcut})")
@@ -222,6 +241,13 @@ class DocumentView(QWidget):
         self._stamp_preset_combo.addItems(STAMP_PRESETS)
         self._stamp_preset_combo.setToolTip("Stamp preset")
         column.addWidget(self._stamp_preset_combo)
+
+        self._tool_palette = QScrollArea()
+        self._tool_palette.setObjectName("RightPanel")
+        self._tool_palette.setWidget(inner)
+        self._tool_palette.setWidgetResizable(True)
+        self._tool_palette.setFixedWidth(60)
+        self._tool_palette.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
     def select_tool(self, tool_cls: type[Tool]) -> None:
         btn = self._tool_buttons.get(tool_cls)
@@ -428,7 +454,7 @@ class DocumentView(QWidget):
                 if hasattr(self._default_style, key):
                     setattr(self._default_style, key, value)
             markup_type = entry.get("markup_type")
-            tool_cls = next((tc for label, tc, _ in _DRAFTING_TOOLS + _MEASUREMENT_TOOLS if tc.tool_id == markup_type), None)
+            tool_cls = next((tc for label, tc, _ in _DRAFTING_TOOLS + _MEASUREMENT_TOOLS + _FORM_AND_SECURITY_TOOLS if tc.tool_id == markup_type), None)
             if tool_cls is not None:
                 self.select_tool(tool_cls)
 
@@ -469,7 +495,7 @@ class DocumentView(QWidget):
         commands = [
             PaletteCommand("Select", lambda: self.select_tool(SelectTool), "Tool"),
         ]
-        for label, tool_cls, _shortcut in _DRAFTING_TOOLS[1:] + _MEASUREMENT_TOOLS:
+        for label, tool_cls, _shortcut in _DRAFTING_TOOLS[1:] + _MEASUREMENT_TOOLS + _FORM_AND_SECURITY_TOOLS:
             commands.append(PaletteCommand(label, lambda tc=tool_cls: self.select_tool(tc), "Tool"))
         commands += [
             PaletteCommand("Undo", self.command_stack.undo, "Edit"),

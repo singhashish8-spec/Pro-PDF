@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import os
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import (
     QDockWidget,
     QFileDialog,
     QInputDialog,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
     QStackedWidget,
@@ -123,6 +126,13 @@ class MainWindow(QMainWindow):
         self._add_pages_action(pages_menu, "Add Bates Numbering…", self._add_bates)
         self._add_pages_action(pages_menu, "Add Header/Footer…", self._add_header_footer)
         self._add_pages_action(pages_menu, "Edit Bookmarks (TOC)…", self._edit_toc)
+
+        security_menu = menu.addMenu("&Security")
+        self._add_pages_action(security_menu, "Save with Password…", self._save_with_password)
+        self._add_pages_action(security_menu, "Scrub Metadata", self._scrub_metadata)
+        security_menu.addSeparator()
+        self._add_pages_action(security_menu, "Export Form Data (XFDF)…", self._export_form_data)
+        self._add_pages_action(security_menu, "Import Form Data (XFDF)…", self._import_form_data)
 
     def _add_pages_action(self, menu, label: str, handler) -> None:
         action = QAction(label, self)
@@ -254,6 +264,57 @@ class MainWindow(QMainWindow):
         dialog = TocEditorDialog(dv.pdf.get_toc(), dv.pdf.page_count, self)
         if dialog.exec():
             dv.pdf.set_toc(dialog.result_toc())
+
+    # -- security (Blueprint v2, Section 7.5) --------------------------------
+    def _save_with_password(self) -> None:
+        dv = self._document_view
+        user_pw, ok = QInputDialog.getText(
+            self, "Save with Password", "Password required to open the file:", QLineEdit.EchoMode.Password
+        )
+        if not ok or not user_pw:
+            return
+        out_path, _ = QFileDialog.getSaveFileName(self, "Save Password-Protected PDF", "", "PDF files (*.pdf)")
+        if not out_path:
+            return
+        try:
+            dv.pdf.export(out_path, dv.markup_document.all_objects(), user_password=user_pw)
+        except Exception as exc:
+            QMessageBox.critical(self, "Could not save file", str(exc))
+            return
+        QMessageBox.information(self, "Saved", f"Saved password-protected PDF to {out_path}")
+
+    def _scrub_metadata(self) -> None:
+        self._document_view.pdf.scrub_metadata()
+        QMessageBox.information(self, "Metadata Scrubbed", "Document metadata has been cleared.")
+
+    def _export_form_data(self) -> None:
+        from app.persistence import xfdf
+
+        dv = self._document_view
+        if not dv.pdf.path:
+            return
+        out_path, _ = QFileDialog.getSaveFileName(self, "Export Form Data", "", "XFDF files (*.xfdf)")
+        if not out_path:
+            return
+        count = xfdf.export_xfdf(dv.markup_document.all_objects(), os.path.basename(dv.pdf.path), out_path)
+        QMessageBox.information(self, "Exported", f"Exported {count} field(s) to {out_path}")
+
+    def _import_form_data(self) -> None:
+        from app.commands.object_commands import AddObjectCommand
+        from app.persistence import xfdf
+
+        dv = self._document_view
+        in_path, _ = QFileDialog.getOpenFileName(self, "Import Form Data", "", "XFDF files (*.xfdf)")
+        if not in_path:
+            return
+        try:
+            objects = xfdf.import_xfdf(in_path, page_index=dv.current_page)
+        except Exception as exc:
+            QMessageBox.critical(self, "Could not import form data", str(exc))
+            return
+        for obj in objects:
+            dv.command_stack.push(AddObjectCommand(dv.markup_document, obj))
+        QMessageBox.information(self, "Imported", f"Imported {len(objects)} field(s) onto page {dv.current_page + 1}")
 
     def _on_undo_state_changed(self, can_undo: bool, can_redo: bool) -> None:
         self._undo_action.setEnabled(can_undo)
