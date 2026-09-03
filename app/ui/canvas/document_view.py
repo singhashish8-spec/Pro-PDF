@@ -39,6 +39,8 @@ from app.tools.textbox import TextBoxTool
 from app.tools.underline import UnderlineTool
 from app.ui.canvas.glass_scene import GlassScene
 from app.ui.canvas.pdf_view import PdfGraphicsView
+from app.ui.panels.command_palette import CommandPalette, PaletteCommand
+from app.ui.panels.floating_style_panel import FloatingStylePanel
 
 _DRAFTING_TOOLS = [
     ("Select", SelectTool, "S"),
@@ -80,6 +82,10 @@ class DocumentView(QWidget):
         self.view.scene_moved.connect(self._on_scene_moved)
         self.view.scene_released.connect(self._on_scene_released)
 
+        self._floating_panel = FloatingStylePanel(self)
+        self._floating_panel.bind(self.markup_document, self.command_stack)
+        self._floating_panel.set_on_delete(lambda: self.select_tool(SelectTool))
+
         self._build_toolbar()
         self._build_tool_palette()
 
@@ -108,6 +114,8 @@ class DocumentView(QWidget):
         self._finish_shortcut.activated.connect(self._on_finish_key)
         self._finish_shortcut2 = QShortcut(QKeySequence(Qt.Key.Key_Enter), self)
         self._finish_shortcut2.activated.connect(self._on_finish_key)
+        self._palette_shortcut = QShortcut(QKeySequence("Ctrl+K"), self)
+        self._palette_shortcut.activated.connect(self.open_command_palette)
 
     def _build_toolbar(self) -> None:
         self._toolbar = QWidget()
@@ -179,6 +187,8 @@ class DocumentView(QWidget):
         btn = self._tool_buttons.get(tool_cls)
         if btn is not None:
             btn.setChecked(True)
+        if tool_cls is not SelectTool:
+            self._floating_panel.hide_panel()
         kwargs = {}
         if tool_cls is StampTool:
             kwargs["preset"] = self._stamp_preset_combo.currentText()
@@ -272,6 +282,7 @@ class DocumentView(QWidget):
     def _on_stack_changed(self) -> None:
         self.undo_state_changed.emit(self.command_stack.can_undo, self.command_stack.can_redo)
         self._write_autosave()
+        self.refresh_floating_panel()
 
     # -- tools -----------------------------------------------------------
     def set_active_tool(self, tool: Tool | None) -> None:
@@ -303,7 +314,54 @@ class DocumentView(QWidget):
             pdf=self.pdf,
             text_provider=self.prompt_for_text,
             preview_callback=self.scene.set_preview,
+            selection_callback=self._on_selection_changed,
         )
+
+    def _on_selection_changed(self, obj_id: str | None) -> None:
+        if obj_id is None:
+            self._floating_panel.hide_panel()
+            return
+        self._position_floating_panel(obj_id)
+
+    def _position_floating_panel(self, obj_id: str) -> None:
+        obj = self.markup_document.get(obj_id)
+        if obj is None or len(obj.points) < 1:
+            self._floating_panel.hide_panel()
+            return
+        from app.tools.geometry import bbox_of
+
+        points = obj.points if len(obj.points) >= 2 else [obj.points[0], obj.points[0]]
+        x0, y0, x1, y1 = bbox_of(points)
+        top_right_scene = self.scene.pdf_point_to_scene(x1, y0)
+        view_point = self.view.mapFromScene(*top_right_scene)
+        global_point = self.view.viewport().mapToGlobal(view_point)
+        self._floating_panel.show_for(obj, global_point)
+
+    def refresh_floating_panel(self) -> None:
+        """Re-syncs the floating panel's position/values after a move or style change."""
+        if isinstance(self._active_tool, SelectTool) and self._active_tool.selected_id:
+            self._position_floating_panel(self._active_tool.selected_id)
+
+    # -- command palette -----------------------------------------------------
+    def build_palette_commands(self) -> list[PaletteCommand]:
+        commands = [
+            PaletteCommand("Select", lambda: self.select_tool(SelectTool), "Tool"),
+        ]
+        for label, tool_cls, _shortcut in _DRAFTING_TOOLS[1:]:
+            commands.append(PaletteCommand(label, lambda tc=tool_cls: self.select_tool(tc), "Tool"))
+        commands += [
+            PaletteCommand("Undo", self.command_stack.undo, "Edit"),
+            PaletteCommand("Redo", self.command_stack.redo, "Edit"),
+            PaletteCommand("Zoom In", lambda: self._on_zoom_requested(self.view.zoom * 1.15), "View"),
+            PaletteCommand("Zoom Out", lambda: self._on_zoom_requested(self.view.zoom / 1.15), "View"),
+            PaletteCommand("Next Page", lambda: self.go_to_page(self._page_index + 1), "Navigate"),
+            PaletteCommand("Previous Page", lambda: self.go_to_page(self._page_index - 1), "Navigate"),
+        ]
+        return commands
+
+    def open_command_palette(self) -> None:
+        palette = CommandPalette(self.build_palette_commands(), self)
+        palette.exec()
 
     def prompt_for_text(self, title: str) -> str | None:
         from PyQt6.QtWidgets import QInputDialog

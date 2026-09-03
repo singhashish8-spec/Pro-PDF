@@ -8,7 +8,7 @@ Tracks completion of the phases in `docs/blueprint/pdf_pro_development_blueprint
 | 1 — Core Shell & Dashboard | ✅ Done | `QMainWindow` shell, `theme.qss` tokens (light + dark), Home Dashboard with recent files |
 | 2 — Rendering, Glass Layer, Undo/Redo | ✅ Done | `PDFDocument` core wrapper, `scene_to_pdf`/`pdf_to_scene`, Glass Layer canvas, pan/zoom, full Command-pattern undo/redo, autosave journal wired to the command stack |
 | 3 — Drafting Suite v1 | ✅ Done | 15 tools (select, rectangle, ellipse, arrow, pen, highlighter, underline, strikeout, squiggly, note, stamp, textbox, callout, cloud, eraser), all undo/redo-backed, wired into a left tool palette |
-| 4 — Floating Menu, Command Palette, UX Polish | ⬜ Not started | |
+| 4 — Floating Menu, Command Palette, UX Polish | ✅ Done | Live style-editing floating panel on selection, Ctrl+K command palette |
 | 5 — Engineering & Measurement Suite | ⬜ Not started | |
 | 6 — Document & Page Management + Markups List | ⬜ Not started | |
 | 7 — Forms, Redaction, Security, Signatures | ⬜ Not started | |
@@ -55,4 +55,10 @@ Tracks completion of the phases in `docs/blueprint/pdf_pro_development_blueprint
 - `app/ui/canvas/document_view.py` — left tool palette (checkable, exclusive `QToolButton`s + a stamp-preset combo), `select_tool()`/`activate_tool()`, keyboard shortcuts (Delete/Backspace → `SelectTool.delete_selected`, Return/Enter → `CloudTool.finish`, Escape → cancel + back to Select). Select is the default tool on every `load()`.
 - `app/core/markup_baker.py` — bake functions added for every new type this phase (arrow with arrowhead, highlight, underline/strikeout/squiggly polylines, text-based note/textbox, stamp box, callout leader+text).
 - Tests: `tests/unit/test_tools.py` (one or more tests per tool, plus the geometry helpers, using a real `PDFDocument` for text-line snapping), `tests/integration/test_document_view.py` additions (toolbar wiring, keyboard shortcuts). 55 tests passing. Also verified with a full manual smoke run exercising all 15 tools plus export.
+
+## Phase 4 detail
+
+- `app/ui/panels/floating_style_panel.py` — `FloatingStylePanel`: appears near the selected object (positioned via `DocumentView._position_floating_panel`, which converts the object's PDF-space bbox to a global screen point through the same `pdf_to_scene`/`view.mapFromScene`/`viewport.mapToGlobal` chain used everywhere else). Stroke/fill color swatches (`QColorDialog`), a fill-clear button, line-width spinner, and an opacity slider each push a `StyleChangeCommand` immediately on change — real-time, undoable style editing, per Section 7.7. A delete button reuses `DeleteObjectCommand`. Wired to `SelectTool`'s `selection_callback`; hidden whenever a non-Select tool is chosen, repositioned after every command (so it tracks a dragged object).
+- `app/ui/panels/command_palette.py` — `CommandPalette` (`QDialog`) + `PaletteCommand`; substring filter, arrow-key navigation, Enter/double-click to run. `DocumentView.build_palette_commands()` registers every tool, Undo/Redo, zoom in/out, and page navigation. Bound to Ctrl+K both as a `QShortcut` on `DocumentView` and as a `MainWindow` View-menu action, satisfying the "Figma feel" milestone alongside the floating panel.
+- Tests: `tests/unit/test_command_palette.py`, `tests/unit/test_floating_style_panel.py`, plus `tests/integration/test_document_view.py` additions for selection→panel wiring and palette command registration. 65 tests passing. Also verified with a full manual smoke run through `MainWindow`: select an object, live-edit its style via the floating panel, undo, then run a tool switch through the command palette's own command list.
 

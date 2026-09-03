@@ -123,3 +123,46 @@ def test_finish_and_escape_shortcuts_drive_cloud_tool(qapp, make_pdf):
     view._on_escape()
     assert isinstance(view.active_tool, SelectTool)
     view.pdf.close()
+
+
+def test_selecting_object_shows_floating_panel(qapp, make_pdf):
+    path = make_pdf(page_count=1)
+    view = DocumentView()
+    view.load(path)
+
+    obj = MarkupObject(type="rectangle", page_index=0, points=[(50, 50), (150, 150)])
+    view.command_stack.push(AddObjectCommand(view.markup_document, obj))
+
+    view.select_tool(SelectTool)
+    view.active_tool.on_press((60, 60))
+    assert view._floating_panel._obj_id == obj.id
+
+    view.active_tool.on_press((999, 999))  # click empty space clears selection
+    assert view._floating_panel._obj_id is None
+
+
+def test_switching_away_from_select_hides_floating_panel(qapp, make_pdf):
+    path = make_pdf(page_count=1)
+    view = DocumentView()
+    view.load(path)
+
+    obj = MarkupObject(type="rectangle", page_index=0, points=[(50, 50), (150, 150)])
+    view.command_stack.push(AddObjectCommand(view.markup_document, obj))
+    view.select_tool(SelectTool)
+    view.active_tool.on_press((60, 60))
+    assert view._floating_panel._obj_id == obj.id
+
+    view.select_tool(RectangleTool)
+    assert view._floating_panel._obj_id is None
+
+
+def test_command_palette_opens_and_lists_tools(qapp, make_pdf):
+    path = make_pdf(page_count=1)
+    view = DocumentView()
+    view.load(path)
+
+    commands = view.build_palette_commands()
+    labels = {c.label for c in commands}
+    assert "Rectangle" in labels
+    assert "Undo" in labels
+    assert "Zoom In" in labels

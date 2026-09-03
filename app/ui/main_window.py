@@ -90,6 +90,11 @@ class MainWindow(QMainWindow):
         toggle_theme_action.triggered.connect(self._theme_manager.toggle)
         view_menu.addAction(toggle_theme_action)
 
+        palette_action = QAction("Command &Palette…", self)
+        palette_action.setShortcut("Ctrl+K")
+        palette_action.triggered.connect(self._document_view.open_command_palette)
+        view_menu.addAction(palette_action)
+
     def _on_undo_state_changed(self, can_undo: bool, can_redo: bool) -> None:
         self._undo_action.setEnabled(can_undo)
         self._redo_action.setEnabled(can_redo)
