@@ -1,0 +1,39 @@
+[project]
+name = "pdf-pro"
+version = "0.0.1"
+description = "Internal R&D desktop PDF editor for AEC workflows."
+requires-python = ">=3.11"
+dependencies = [
+    "pymupdf>=1.24",
+    "PyQt6>=6.6",
+    "Pillow>=10.0",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-qt>=4.4",
+    "pytest-timeout>=2.3",
+]
+# No extra Python dependency for OCR: PyMuPDF's page.get_textpage_ocr() /
+# Pixmap.pdfocr_tobytes() call Tesseract directly. The Tesseract binary +
+# language data must be installed on the machine (e.g. `apt install
+# tesseract-ocr` on Windows the equivalent installer) — see README.
+
+[project.scripts]
+pdf-pro = "app.main:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# A test that hangs (e.g. an accidental blocking QMessageBox.exec() with no
+# one to click it — this has happened twice in this codebase, see
+# docs/progress.md) fails fast and visibly instead of hanging the whole run.
+timeout = 20
