@@ -9,7 +9,7 @@ from PyQt6.QtCore import QRectF
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import QGraphicsPixmapItem, QGraphicsScene
 
-from app.core.coordinates import pdf_to_scene
+from app.core.coordinates import pdf_to_scene, scene_to_pdf
 from app.models.markup import MarkupObject
 from app.ui.canvas.markup_items import build_graphics_item
 
@@ -21,11 +21,9 @@ class GlassScene(QGraphicsScene):
         self._background_item.setZValue(-1000)
         self.addItem(self._background_item)
         self._markup_items: dict[str, object] = {}
-        self.page_height: float = 0.0
         self.scale_factor: float = 1.0
 
-    def set_page_image(self, image, page_height: float, scale_factor: float) -> None:
-        self.page_height = page_height
+    def set_page_image(self, image, scale_factor: float) -> None:
         self.scale_factor = scale_factor
         pixmap = QPixmap.fromImage(image)
         self._background_item.setPixmap(pixmap)
@@ -36,15 +34,13 @@ class GlassScene(QGraphicsScene):
             self.removeItem(item)
         self._markup_items.clear()
         for obj in objects:
-            item = build_graphics_item(obj, self.page_height, self.scale_factor)
+            item = build_graphics_item(obj, self.scale_factor)
             if item is not None:
                 self.addItem(item)
                 self._markup_items[obj.id] = item
 
     def scene_point_to_pdf(self, x: float, y: float):
-        from app.core.coordinates import scene_to_pdf
-
-        return scene_to_pdf((x, y), self.page_height, self.scale_factor)
+        return scene_to_pdf((x, y), self.scale_factor)
 
     def pdf_point_to_scene(self, x: float, y: float):
-        return pdf_to_scene((x, y), self.page_height, self.scale_factor)
+        return pdf_to_scene((x, y), self.scale_factor)

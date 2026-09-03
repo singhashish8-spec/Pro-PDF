@@ -43,8 +43,8 @@ def _brush(obj: MarkupObject) -> QBrush:
     return QBrush(Qt.BrushStyle.NoBrush)
 
 
-def _scene_points(obj: MarkupObject, page_height: float, scale: float) -> list[QPointF]:
-    return [QPointF(*pdf_to_scene(p, page_height, scale)) for p in obj.points]
+def _scene_points(obj: MarkupObject, scale: float) -> list[QPointF]:
+    return [QPointF(*pdf_to_scene(p, scale)) for p in obj.points]
 
 
 def _bounds_rect(pts: list[QPointF]):
@@ -53,8 +53,8 @@ def _bounds_rect(pts: list[QPointF]):
     return min(xs), min(ys), max(xs), max(ys)
 
 
-def _build_rectangle(obj, page_height, scale) -> QGraphicsItem | None:
-    pts = _scene_points(obj, page_height, scale)
+def _build_rectangle(obj, scale) -> QGraphicsItem | None:
+    pts = _scene_points(obj, scale)
     if len(pts) < 2:
         return None
     x0, y0, x1, y1 = _bounds_rect(pts)
@@ -65,8 +65,8 @@ def _build_rectangle(obj, page_height, scale) -> QGraphicsItem | None:
     return item
 
 
-def _build_ellipse(obj, page_height, scale) -> QGraphicsItem | None:
-    pts = _scene_points(obj, page_height, scale)
+def _build_ellipse(obj, scale) -> QGraphicsItem | None:
+    pts = _scene_points(obj, scale)
     if len(pts) < 2:
         return None
     x0, y0, x1, y1 = _bounds_rect(pts)
@@ -77,8 +77,8 @@ def _build_ellipse(obj, page_height, scale) -> QGraphicsItem | None:
     return item
 
 
-def _build_line_like(obj, page_height, scale) -> QGraphicsItem | None:
-    pts = _scene_points(obj, page_height, scale)
+def _build_line_like(obj, scale) -> QGraphicsItem | None:
+    pts = _scene_points(obj, scale)
     if len(pts) < 2:
         return None
     if len(pts) == 2:
@@ -93,10 +93,10 @@ def _build_line_like(obj, page_height, scale) -> QGraphicsItem | None:
     return item
 
 
-def _build_polygon(obj, page_height, scale) -> QGraphicsItem | None:
-    pts = _scene_points(obj, page_height, scale)
+def _build_polygon(obj, scale) -> QGraphicsItem | None:
+    pts = _scene_points(obj, scale)
     if len(pts) < 3:
-        return _build_line_like(obj, page_height, scale)
+        return _build_line_like(obj, scale)
     item = QGraphicsPolygonItem(QPolygonF(pts))
     item.setPen(_pen(obj))
     item.setBrush(_brush(obj))
@@ -104,8 +104,8 @@ def _build_polygon(obj, page_height, scale) -> QGraphicsItem | None:
     return item
 
 
-def _build_highlight(obj, page_height, scale) -> QGraphicsItem | None:
-    pts = _scene_points(obj, page_height, scale)
+def _build_highlight(obj, scale) -> QGraphicsItem | None:
+    pts = _scene_points(obj, scale)
     if len(pts) < 2:
         return None
     x0, y0, x1, y1 = _bounds_rect(pts)
@@ -117,10 +117,10 @@ def _build_highlight(obj, page_height, scale) -> QGraphicsItem | None:
     return item
 
 
-def _build_text(obj, page_height, scale) -> QGraphicsItem | None:
+def _build_text(obj, scale) -> QGraphicsItem | None:
     if not obj.points:
         return None
-    x, y = pdf_to_scene(obj.points[0], page_height, scale)
+    x, y = pdf_to_scene(obj.points[0], scale)
     item = QGraphicsSimpleTextItem(obj.text or "")
     item.setPos(x, y)
     item.setBrush(QBrush(QColor(obj.style.stroke_color)))
@@ -150,11 +150,11 @@ _BUILDERS = {
 }
 
 
-def build_graphics_item(obj: MarkupObject, page_height: float, scale: float) -> QGraphicsItem | None:
+def build_graphics_item(obj: MarkupObject, scale: float) -> QGraphicsItem | None:
     builder = _BUILDERS.get(obj.type)
     if builder is None:
-        return _build_line_like(obj, page_height, scale)
-    item = builder(obj, page_height, scale)
+        return _build_line_like(obj, scale)
+    item = builder(obj, scale)
     if item is not None:
         item.setData(0, obj.id)
     return item

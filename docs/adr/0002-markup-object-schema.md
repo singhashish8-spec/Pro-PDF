@@ -12,7 +12,7 @@ Every annotation, measurement, form field, and shape — regardless of tool — 
   "id": "uuid-v4",
   "type": "rectangle | ellipse | arrow | pen | highlight | underline | strikeout | note | stamp | callout | cloud | text_field | checkbox | measure_linear | measure_area | measure_count | redaction",
   "page_index": 0,
-  "geometry": { "points": [[x, y], [x, y]], "note": "always in PDF user space" },
+  "geometry": { "points": [[x, y], [x, y]], "note": "PDF page space: top-left origin, y-down (see ADR 0001)" },
   "style": { "stroke_color": "#339AF0", "fill_color": null, "line_width": 2, "opacity": 1.0 },
   "measurement": { "calibration_id": "uuid", "value": 14.5, "unit": "ft" },
   "author": "username",

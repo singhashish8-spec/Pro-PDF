@@ -153,11 +153,10 @@ class DocumentView(QWidget):
         if not self.pdf.is_open:
             return
         image = self.pdf.render_page(self._page_index, self.view.zoom)
-        page_height = self.pdf.page_size(self._page_index)[1]
         from app.core.pdf_document import BASE_DPI_SCALE
 
         effective_scale = self.view.zoom * BASE_DPI_SCALE
-        self.scene.set_page_image(image, page_height, effective_scale)
+        self.scene.set_page_image(image, effective_scale)
         self._refresh_markups()
 
     def _refresh_markups(self) -> None:

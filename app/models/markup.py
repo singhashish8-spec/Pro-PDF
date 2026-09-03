@@ -111,7 +111,10 @@ class MarkupObject:
             "id": self.id,
             "type": self.type,
             "page_index": self.page_index,
-            "geometry": {"points": [list(p) for p in self.points], "note": "always in PDF user space"},
+            "geometry": {
+                "points": [list(p) for p in self.points],
+                "note": "PDF page space: top-left origin, y-down, unaffected by zoom (see ADR 0001)",
+            },
             "text": self.text,
             "style": self.style.to_dict(),
             "measurement": self.measurement.to_dict() if self.measurement else None,
