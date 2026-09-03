@@ -87,6 +87,43 @@ class MarkupDocument:
         """Call after in-place mutation of an object already in the store."""
         self._notify()
 
+    # -- page structure changes (Section 7.4) -------------------------------
+    def remove_objects_on_page(self, page_index: int) -> None:
+        """Drops every object on a page being deleted."""
+        for obj in self.objects_on_page(page_index):
+            self.remove(obj.id)
+
+    def shift_pages(self, from_index: int, delta: int) -> None:
+        """Adjusts every object's page_index by `delta` for pages at/after
+        `from_index` — call after inserting (`delta=+1`) or deleting
+        (`delta=-1`) a page, once any objects on a deleted page are gone."""
+        rebuilt: dict[int, list[MarkupObject]] = defaultdict(list)
+        for obj in self.all_objects():
+            if obj.page_index >= from_index:
+                obj.page_index += delta
+            rebuilt[obj.page_index].append(obj)
+        self._by_page = rebuilt
+        for cal in self._calibrations.values():
+            if cal.page_index >= from_index:
+                cal.page_index += delta
+        self._notify()
+
+    def remap_pages(self, new_order: list[int]) -> None:
+        """Reassigns page_index per `new_order` (old index at each new position),
+        e.g. after reordering pages — new_order[i] is the OLD index now at position i."""
+        old_to_new = {old: new for new, old in enumerate(new_order)}
+        for obj in self.all_objects():
+            if obj.page_index in old_to_new:
+                obj.page_index = old_to_new[obj.page_index]
+        for cal in self._calibrations.values():
+            if cal.page_index in old_to_new:
+                cal.page_index = old_to_new[cal.page_index]
+        rebuilt: dict[int, list[MarkupObject]] = defaultdict(list)
+        for obj in self.all_objects():
+            rebuilt[obj.page_index].append(obj)
+        self._by_page = rebuilt
+        self._notify()
+
     def to_journal(self) -> list[dict]:
         return [obj.to_dict() for obj in self.all_objects()]
 

@@ -3,7 +3,7 @@ Glass Layer canvas (Blueprint v2, Phase 2)."""
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QFileSystemWatcher, Qt, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QButtonGroup,
@@ -20,7 +20,7 @@ from app.commands.base import CommandStack
 from app.core.pdf_document import PDFDocument
 from app.models.markup import MarkupObject, Style
 from app.models.project import MarkupDocument
-from app.persistence import autosave
+from app.persistence import autosave, markups_db
 from app.tools.arrow import ArrowTool
 from app.tools.base import Tool, ToolContext
 from app.tools.calibration_tool import CalibrationTool
@@ -86,6 +86,8 @@ _CLICK_TO_BUILD_TOOLS = (CloudTool, MeasureAreaTool, MeasurePerimeterTool)
 class DocumentView(QWidget):
     undo_state_changed = pyqtSignal(bool, bool)  # can_undo, can_redo
     page_changed = pyqtSignal(int, int)  # 0-based index, page_count
+    markups_changed = pyqtSignal()  # for the Markups List panel
+    external_change_detected = pyqtSignal(str)  # file path changed on disk while open
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -98,6 +100,9 @@ class DocumentView(QWidget):
         self._default_style = Style()
         #: Per-page id of the calibration measurement tools should use (Section 7.2).
         self._active_calibration_by_page: dict[int, str] = {}
+        self._file_watcher = QFileSystemWatcher(self)
+        self._file_watcher.fileChanged.connect(self._on_file_changed_on_disk)
+        self._ignore_next_external_change = False
 
         self.scene = GlassScene()
         self.view = PdfGraphicsView()
@@ -126,7 +131,7 @@ class DocumentView(QWidget):
         body.addWidget(self.view, 1)
         layout.addLayout(body, 1)
 
-        self.markup_document.add_listener(self._refresh_markups)
+        self.markup_document.add_listener(self._on_markup_document_changed)
         self.command_stack.add_listener(self._on_stack_changed)
 
         self._select_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
@@ -249,7 +254,10 @@ class DocumentView(QWidget):
         has_journal = autosave.journal_exists(path)
         self._suspend_autosave = True
         try:
+            if self._file_watcher.files():
+                self._file_watcher.removePaths(self._file_watcher.files())
             self.pdf.open(path, password=password)
+            self._file_watcher.addPath(path)
             self.command_stack.clear()
             self.markup_document.replace_all([])
             self._page_spin.blockSignals(True)
@@ -258,9 +266,28 @@ class DocumentView(QWidget):
             self._page_count_label.setText(f"/ {self.pdf.page_count}")
             self.go_to_page(0)
             self.select_tool(SelectTool)
+            self._sync_markups_db()
         finally:
             self._suspend_autosave = False
         return has_journal
+
+    def _on_file_changed_on_disk(self, path: str) -> None:
+        if self._ignore_next_external_change:
+            self._ignore_next_external_change = False
+            return
+        self.external_change_detected.emit(path)
+        # Some editors replace the file (new inode) rather than writing in place,
+        # which drops it from the watch list; re-add it so we keep watching.
+        if path not in self._file_watcher.files() and self.pdf.path == path:
+            import os
+
+            if os.path.exists(path):
+                self._file_watcher.addPath(path)
+
+    def notify_saving(self) -> None:
+        """Call right before writing to the open file ourselves, so the
+        file-watcher doesn't mistake our own save for an external change."""
+        self._ignore_next_external_change = True
 
     def recover_from_journal(self) -> None:
         if not self.pdf.path:
@@ -286,7 +313,6 @@ class DocumentView(QWidget):
         self._page_spin.setValue(index + 1)
         self._page_spin.blockSignals(False)
         self._render_current_page()
-        self._refresh_scale_combo()
         self.page_changed.emit(index, self.pdf.page_count)
 
     @property
@@ -307,19 +333,32 @@ class DocumentView(QWidget):
 
         effective_scale = self.view.zoom * BASE_DPI_SCALE
         self.scene.set_page_image(image, effective_scale)
-        self._refresh_markups()
+        self._rebuild_scene_markups()
 
-    def _refresh_markups(self) -> None:
+    def _rebuild_scene_markups(self) -> None:
         if not self.pdf.is_open:
             return
         objects = self.markup_document.objects_on_page(self._page_index)
         self.scene.rebuild_markups(objects)
 
-    def _on_stack_changed(self) -> None:
-        self.undo_state_changed.emit(self.command_stack.can_undo, self.command_stack.can_redo)
+    def _on_markup_document_changed(self) -> None:
+        """Fires for every MarkupDocument state change, whether pushed through
+        the CommandStack (undo/redo-able) or applied directly by page
+        management (insert/delete/rotate/reorder shifting or dropping
+        objects, which isn't itself undoable — see docs/progress.md)."""
+        self._rebuild_scene_markups()
         self._write_autosave()
         self.refresh_floating_panel()
         self._refresh_scale_combo()
+        self._sync_markups_db()
+
+    def _on_stack_changed(self) -> None:
+        self.undo_state_changed.emit(self.command_stack.can_undo, self.command_stack.can_redo)
+
+    def _sync_markups_db(self) -> None:
+        if self.pdf.path:
+            markups_db.sync_all(self.pdf.path, self.markup_document.all_objects())
+            self.markups_changed.emit()
 
     # -- tools -----------------------------------------------------------
     def set_active_tool(self, tool: Tool | None) -> None:
@@ -445,6 +484,67 @@ class DocumentView(QWidget):
     def open_command_palette(self) -> None:
         palette = CommandPalette(self.build_palette_commands(), self)
         palette.exec()
+
+    # -- page management (Blueprint v2, Section 7.4) -------------------------
+    def insert_page(self, index: int) -> None:
+        self.pdf.insert_blank_page(index)
+        self.markup_document.shift_pages(index, +1)
+        self._page_spin.blockSignals(True)
+        self._page_spin.setMaximum(max(self.pdf.page_count, 1))
+        self._page_spin.blockSignals(False)
+        self._page_count_label.setText(f"/ {self.pdf.page_count}")
+        self.go_to_page(index)
+
+    def delete_current_page(self) -> None:
+        if self.pdf.page_count <= 1:
+            return
+        index = self._page_index
+        self.markup_document.remove_objects_on_page(index)
+        self.pdf.delete_page(index)
+        self.markup_document.shift_pages(index + 1, -1)
+        self._page_spin.blockSignals(True)
+        self._page_spin.setMaximum(max(self.pdf.page_count, 1))
+        self._page_spin.blockSignals(False)
+        self._page_count_label.setText(f"/ {self.pdf.page_count}")
+        self.go_to_page(min(index, self.pdf.page_count - 1))
+
+    def rotate_current_page(self, degrees: int) -> None:
+        self.pdf.rotate_page(self._page_index, degrees)
+        self._render_current_page()
+
+    def move_page(self, from_index: int, to_index: int) -> None:
+        n = self.pdf.page_count
+        if not (0 <= from_index < n) or not (0 <= to_index < n) or from_index == to_index:
+            return
+        order = list(range(n))
+        item = order.pop(from_index)
+        order.insert(to_index, item)
+        self.pdf.move_page(from_index, to_index)
+        self.markup_document.remap_pages(order)
+        self.go_to_page(to_index)
+
+    def apply_watermark(self, text: str) -> None:
+        self.pdf.add_watermark(text)
+        self._render_current_page()
+
+    def apply_bates_numbers(self, prefix: str, start: int, digits: int = 6) -> None:
+        self.pdf.add_bates_numbers(prefix, start, digits)
+        self._render_current_page()
+
+    def apply_header_footer(self, header: str, footer: str) -> None:
+        self.pdf.add_header_footer(header, footer)
+        self._render_current_page()
+
+    # -- markups list ------------------------------------------------------
+    def select_object(self, obj_id: str) -> None:
+        obj = self.markup_document.get(obj_id)
+        if obj is None:
+            return
+        if obj.page_index != self._page_index:
+            self.go_to_page(obj.page_index)
+        self.select_tool(SelectTool)
+        self._active_tool.select(obj_id)
+        self._position_floating_panel(obj_id)
 
     def prompt_for_text(self, title: str) -> str | None:
         from PyQt6.QtWidgets import QInputDialog

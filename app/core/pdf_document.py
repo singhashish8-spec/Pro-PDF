@@ -86,18 +86,20 @@ class PDFDocument:
 
     # -- save/export pipeline (Section 6.4) ---------------------------------
     def export(self, output_path: str, markup_objects: list[MarkupObject]) -> None:
-        """Bakes every markup object into a fresh copy of the PDF and saves it.
+        """Bakes every markup object into a copy of the currently open document
+        and saves it — including any in-place structural edits from this
+        session (page insert/delete/rotate/reorder, watermark, Bates,
+        header/footer, TOC) that haven't been written to disk yet.
 
-        The document currently open for editing is untouched — the Glass
-        Layer stays the working document until this is called.
+        The document open for editing itself is untouched — the Glass Layer
+        stays the working document until this is called.
         """
-        if self.path is None:
-            raise RuntimeError("No PDF is currently open.")
+        doc = self._require_doc()
         by_page: dict[int, list[MarkupObject]] = defaultdict(list)
         for obj in markup_objects:
             by_page[obj.page_index].append(obj)
 
-        export_doc = fitz.open(self.path)
+        export_doc = fitz.open(stream=doc.write(), filetype="pdf")
         try:
             for page_index, objects in by_page.items():
                 if 0 <= page_index < export_doc.page_count:
@@ -105,3 +107,129 @@ class PDFDocument:
             export_doc.save(output_path)
         finally:
             export_doc.close()
+
+    # -- page management (Blueprint v2, Section 7.4) -------------------------
+    def insert_blank_page(self, index: int) -> None:
+        doc = self._require_doc()
+        width, height = self.page_size(max(0, min(index, doc.page_count - 1))) if doc.page_count else (612, 792)
+        doc.new_page(pno=index, width=width, height=height)
+
+    def delete_page(self, index: int) -> None:
+        self._require_doc().delete_page(index)
+
+    def rotate_page(self, index: int, degrees: int) -> None:
+        page = self._require_doc()[index]
+        page.set_rotation((page.rotation + degrees) % 360)
+
+    def move_page(self, from_index: int, to_index: int) -> None:
+        """Moves the page at `from_index` so it ends up at `to_index`.
+
+        fitz's own `Document.move_page(pno, to)` takes `to` as "insert before
+        this position in the array as it stood *before* the move" (and -1 for
+        "append at the end"), which is not the same number as the page's final
+        index once `from_index` has been removed. This translates our
+        intuitive (from, to) into the argument fitz actually expects.
+        """
+        doc = self._require_doc()
+        page_count = doc.page_count
+        if to_index >= page_count - 1:
+            fitz_to = -1
+        elif to_index <= from_index:
+            fitz_to = to_index
+        else:
+            fitz_to = to_index + 1
+        doc.move_page(from_index, fitz_to)
+
+    def extract_pages(self, indices: list[int], output_path: str) -> None:
+        doc = self._require_doc()
+        new_doc = fitz.open()
+        try:
+            for i in indices:
+                new_doc.insert_pdf(doc, from_page=i, to_page=i)
+            new_doc.save(output_path)
+        finally:
+            new_doc.close()
+
+    # -- bookmarks / table of contents ----------------------------------------
+    def get_toc(self) -> list[list]:
+        return self._require_doc().get_toc(simple=True)
+
+    def set_toc(self, toc: list[list]) -> None:
+        self._require_doc().set_toc(toc)
+
+    # -- watermark / Bates numbering / headers & footers ------------------------
+    def add_watermark(self, text: str, opacity: float = 0.3, rotate: int = 0) -> None:
+        """`rotate` must be a multiple of 90 — that's the only rotation
+        `Page.insert_text` supports; fitz raises ValueError otherwise."""
+        doc = self._require_doc()
+        rotate = round(rotate / 90) * 90 % 360
+        color = (0.5, 0.5, 0.5)
+        for page in doc:
+            rect = page.rect
+            page.insert_text(
+                (rect.width / 4, rect.height / 2),
+                text,
+                fontsize=40,
+                color=color,
+                rotate=rotate,
+                fill_opacity=opacity,
+                overlay=True,
+            )
+
+    def add_bates_numbers(self, prefix: str = "", start: int = 1, digits: int = 6) -> None:
+        doc = self._require_doc()
+        for i, page in enumerate(doc):
+            number = str(start + i).zfill(digits)
+            rect = page.rect
+            page.insert_text(
+                (rect.width - 150, rect.height - 20),
+                f"{prefix}{number}",
+                fontsize=9,
+                color=(0, 0, 0),
+            )
+
+    def add_header_footer(self, header: str = "", footer: str = "") -> None:
+        doc = self._require_doc()
+        for page in doc:
+            rect = page.rect
+            if header:
+                page.insert_text((rect.width / 2 - 50, 30), header, fontsize=9, color=(0, 0, 0))
+            if footer:
+                page.insert_text((rect.width / 2 - 50, rect.height - 20), footer, fontsize=9, color=(0, 0, 0))
+
+    # -- security (Section 7.5, used starting Phase 7) ------------------------
+    def get_metadata(self) -> dict:
+        return dict(self._require_doc().metadata or {})
+
+    def scrub_metadata(self) -> None:
+        self._require_doc().set_metadata({})
+
+
+def merge_pdfs(paths: list[str], output_path: str) -> None:
+    merged = fitz.open()
+    try:
+        for path in paths:
+            with fitz.open(path) as doc:
+                merged.insert_pdf(doc)
+        merged.save(output_path)
+    finally:
+        merged.close()
+
+
+def split_pdf(path: str, output_dir: str, pages_per_file: int = 1) -> list[str]:
+    import os
+
+    output_paths = []
+    with fitz.open(path) as doc:
+        base_name = os.path.splitext(os.path.basename(path))[0]
+        for start in range(0, doc.page_count, pages_per_file):
+            end = min(start + pages_per_file, doc.page_count) - 1
+            chunk = fitz.open()
+            try:
+                chunk.insert_pdf(doc, from_page=start, to_page=end)
+                out_path = os.path.join(output_dir, f"{base_name}_p{start + 1}-{end + 1}.pdf")
+                chunk.save(out_path)
+                output_paths.append(out_path)
+            finally:
+                chunk.close()
+    return output_paths

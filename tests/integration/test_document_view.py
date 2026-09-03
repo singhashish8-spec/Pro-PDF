@@ -2,7 +2,7 @@ import pytest
 
 from app.commands.object_commands import AddObjectCommand
 from app.models.markup import MarkupObject
-from app.persistence import autosave
+from app.persistence import autosave, markups_db
 from app.tools.calibration_tool import CalibrationTool
 from app.tools.cloud import CloudTool
 from app.tools.measure_area import MeasureAreaTool
@@ -216,4 +216,99 @@ def test_finish_key_also_drives_measure_area_tool(qapp, make_pdf):
     obj = view.markup_document.all_objects()[0]
     assert obj.type == "measure_area"
     assert obj.measurement.value == pytest.approx(100.0)
+    view.pdf.close()
+
+
+def test_deleting_page_removes_its_markups_and_shifts_later_ones(qapp, make_pdf):
+    path = make_pdf(page_count=3)
+    view = DocumentView()
+    view.load(path)
+
+    on_deleted_page = MarkupObject(type="rectangle", page_index=1, points=[(0, 0), (1, 1)])
+    on_later_page = MarkupObject(type="rectangle", page_index=2, points=[(0, 0), (1, 1)])
+    view.command_stack.push(AddObjectCommand(view.markup_document, on_deleted_page))
+    view.command_stack.push(AddObjectCommand(view.markup_document, on_later_page))
+
+    view.go_to_page(1)
+    view.delete_current_page()
+
+    assert view.pdf.page_count == 2
+    assert view.markup_document.get(on_deleted_page.id) is None
+    assert view.markup_document.get(on_later_page.id).page_index == 1
+    view.pdf.close()
+
+
+def test_insert_page_shifts_later_markups(qapp, make_pdf):
+    path = make_pdf(page_count=2)
+    view = DocumentView()
+    view.load(path)
+
+    obj = MarkupObject(type="rectangle", page_index=1, points=[(0, 0), (1, 1)])
+    view.command_stack.push(AddObjectCommand(view.markup_document, obj))
+
+    view.insert_page(0)
+
+    assert view.pdf.page_count == 3
+    assert view.markup_document.get(obj.id).page_index == 2
+    view.pdf.close()
+
+
+def test_move_page_remaps_markups(qapp, make_pdf):
+    path = make_pdf(page_count=3)
+    view = DocumentView()
+    view.load(path)
+
+    obj = MarkupObject(type="rectangle", page_index=0, points=[(0, 0), (1, 1)])
+    view.command_stack.push(AddObjectCommand(view.markup_document, obj))
+
+    view.move_page(0, 2)  # page 0 moves to the end
+
+    assert view.markup_document.get(obj.id).page_index == 2
+    view.pdf.close()
+
+
+def test_stack_change_syncs_markups_db(qapp, make_pdf):
+    path = make_pdf(page_count=1)
+    view = DocumentView()
+    view.load(path)
+
+    signals = []
+    view.markups_changed.connect(lambda: signals.append(True))
+
+    obj = MarkupObject(type="rectangle", page_index=0, points=[(0, 0), (1, 1)])
+    view.command_stack.push(AddObjectCommand(view.markup_document, obj))
+
+    assert signals  # markups_changed fired
+    rows = markups_db.list_markups(path)
+    assert len(rows) == 1
+    assert rows[0]["id"] == obj.id
+    view.pdf.close()
+
+
+def test_select_object_navigates_and_selects(qapp, make_pdf):
+    path = make_pdf(page_count=2)
+    view = DocumentView()
+    view.load(path)
+
+    obj = MarkupObject(type="rectangle", page_index=1, points=[(10, 10), (50, 50)])
+    view.command_stack.push(AddObjectCommand(view.markup_document, obj))
+
+    view.go_to_page(0)
+    view.select_object(obj.id)
+
+    assert view.current_page == 1
+    assert isinstance(view.active_tool, SelectTool)
+    assert view.active_tool.selected_id == obj.id
+    view.pdf.close()
+
+
+def test_watermark_bates_header_footer_apply_without_error(qapp, make_pdf):
+    path = make_pdf(page_count=1)
+    view = DocumentView()
+    view.load(path)
+
+    view.apply_watermark("DRAFT")
+    view.apply_bates_numbers("XYZ-", 1)
+    view.apply_header_footer("Header", "Footer")
+    # A subsequent export should succeed and reflect the in-memory changes.
     view.pdf.close()

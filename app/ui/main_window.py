@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction, QKeySequence
-from PyQt6.QtWidgets import QFileDialog, QMainWindow, QMessageBox, QStackedWidget
+from PyQt6.QtWidgets import (
+    QDockWidget,
+    QFileDialog,
+    QInputDialog,
+    QMainWindow,
+    QMessageBox,
+    QStackedWidget,
+)
 
+from app.persistence import markups_db
 from app.persistence.recent_files import add_recent_file
 from app.ui.canvas.document_view import DocumentView
 from app.ui.dashboard.home_dashboard import HomeDashboard
+from app.ui.panels.markups_list_panel import MarkupsListPanel
 from app.ui.theme.manager import ThemeManager
 
 
@@ -29,11 +39,14 @@ class MainWindow(QMainWindow):
 
         self._document_view = DocumentView()
         self._document_view.undo_state_changed.connect(self._on_undo_state_changed)
+        self._document_view.markups_changed.connect(self._refresh_markups_list)
+        self._document_view.external_change_detected.connect(self._on_external_change_detected)
         self._stack.addWidget(self._document_view)
 
         self._current_path: str | None = None
 
         self._build_menu()
+        self._build_markups_dock()
 
     @property
     def document_view(self) -> DocumentView:
@@ -95,6 +108,153 @@ class MainWindow(QMainWindow):
         palette_action.triggered.connect(self._document_view.open_command_palette)
         view_menu.addAction(palette_action)
 
+        pages_menu = menu.addMenu("&Pages")
+        self._add_pages_action(pages_menu, "Insert Blank Page", self._insert_page)
+        self._add_pages_action(pages_menu, "Delete Current Page", self._delete_page)
+        self._add_pages_action(pages_menu, "Rotate Left", lambda: self._document_view.rotate_current_page(-90))
+        self._add_pages_action(pages_menu, "Rotate Right", lambda: self._document_view.rotate_current_page(90))
+        self._add_pages_action(pages_menu, "Move Page…", self._move_page)
+        pages_menu.addSeparator()
+        self._add_pages_action(pages_menu, "Extract Pages…", self._extract_pages)
+        self._add_pages_action(pages_menu, "Merge PDFs…", self._merge_pdfs)
+        self._add_pages_action(pages_menu, "Split PDF…", self._split_pdf)
+        pages_menu.addSeparator()
+        self._add_pages_action(pages_menu, "Add Watermark…", self._add_watermark)
+        self._add_pages_action(pages_menu, "Add Bates Numbering…", self._add_bates)
+        self._add_pages_action(pages_menu, "Add Header/Footer…", self._add_header_footer)
+        self._add_pages_action(pages_menu, "Edit Bookmarks (TOC)…", self._edit_toc)
+
+    def _add_pages_action(self, menu, label: str, handler) -> None:
+        action = QAction(label, self)
+        action.triggered.connect(handler)
+        menu.addAction(action)
+
+    def _build_markups_dock(self) -> None:
+        self._markups_panel = MarkupsListPanel(self._document_view.select_object)
+        dock = QDockWidget("Markups List", self)
+        dock.setWidget(self._markups_panel)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
+        self._markups_dock = dock
+
+    def _refresh_markups_list(self) -> None:
+        if self._document_view.pdf.path:
+            rows = markups_db.list_markups(self._document_view.pdf.path)
+            self._markups_panel.set_rows(rows)
+
+    def _on_external_change_detected(self, path: str) -> None:
+        answer = QMessageBox.question(
+            self,
+            "File changed on disk",
+            f"{path}\n\nThis file changed outside PDF Pro. Reload it? Unsaved markup edits are kept "
+            "separately in the autosave journal and won't be lost, but any unsaved page/document "
+            "structure changes (page insert/delete/rotate, watermark, etc.) will be.",
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.open_document(path)
+
+    # -- page management ----------------------------------------------------
+    def _insert_page(self) -> None:
+        self._document_view.insert_page(self._document_view.current_page)
+
+    def _delete_page(self) -> None:
+        confirm = QMessageBox.question(self, "Delete Page", "Delete the current page? This also removes its markups.")
+        if confirm == QMessageBox.StandardButton.Yes:
+            self._document_view.delete_current_page()
+
+    def _move_page(self) -> None:
+        dv = self._document_view
+        target, ok = QInputDialog.getInt(
+            self, "Move Page", "Move current page to position:", dv.current_page + 1, 1, dv.pdf.page_count
+        )
+        if ok:
+            dv.move_page(dv.current_page, target - 1)
+
+    def _extract_pages(self) -> None:
+        dv = self._document_view
+        text, ok = QInputDialog.getText(self, "Extract Pages", "Page numbers (e.g. 1,3,5-7):", text=str(dv.current_page + 1))
+        if not ok or not text.strip():
+            return
+        indices = self._parse_page_ranges(text, dv.pdf.page_count)
+        if not indices:
+            return
+        out_path, _ = QFileDialog.getSaveFileName(self, "Save Extracted Pages", "", "PDF files (*.pdf)")
+        if out_path:
+            dv.pdf.extract_pages(indices, out_path)
+            QMessageBox.information(self, "Extracted", f"Saved {len(indices)} page(s) to {out_path}")
+
+    @staticmethod
+    def _parse_page_ranges(text: str, page_count: int) -> list[int]:
+        indices: list[int] = []
+        for part in text.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            if "-" in part:
+                start, end = part.split("-", 1)
+                try:
+                    indices.extend(range(int(start) - 1, int(end)))
+                except ValueError:
+                    continue
+            else:
+                try:
+                    indices.append(int(part) - 1)
+                except ValueError:
+                    continue
+        return [i for i in indices if 0 <= i < page_count]
+
+    def _merge_pdfs(self) -> None:
+        from app.core.pdf_document import merge_pdfs
+
+        paths, _ = QFileDialog.getOpenFileNames(self, "Select PDFs to merge, in order", "", "PDF files (*.pdf)")
+        if len(paths) < 2:
+            return
+        out_path, _ = QFileDialog.getSaveFileName(self, "Save Merged PDF", "", "PDF files (*.pdf)")
+        if out_path:
+            merge_pdfs(paths, out_path)
+            QMessageBox.information(self, "Merged", f"Saved merged PDF to {out_path}")
+
+    def _split_pdf(self) -> None:
+        from app.core.pdf_document import split_pdf
+
+        if not self._current_path:
+            return
+        pages_per_file, ok = QInputDialog.getInt(self, "Split PDF", "Pages per file:", 1, 1, 1000)
+        if not ok:
+            return
+        out_dir = QFileDialog.getExistingDirectory(self, "Choose output folder")
+        if out_dir:
+            outputs = split_pdf(self._current_path, out_dir, pages_per_file)
+            QMessageBox.information(self, "Split", f"Created {len(outputs)} file(s) in {out_dir}")
+
+    def _add_watermark(self) -> None:
+        text, ok = QInputDialog.getText(self, "Add Watermark", "Watermark text:")
+        if ok and text.strip():
+            self._document_view.apply_watermark(text.strip())
+
+    def _add_bates(self) -> None:
+        prefix, ok = QInputDialog.getText(self, "Add Bates Numbering", "Prefix (e.g. ABC-):")
+        if not ok:
+            return
+        start, ok = QInputDialog.getInt(self, "Add Bates Numbering", "Starting number:", 1, 1)
+        if ok:
+            self._document_view.apply_bates_numbers(prefix, start)
+
+    def _add_header_footer(self) -> None:
+        header, ok = QInputDialog.getText(self, "Add Header/Footer", "Header text:")
+        if not ok:
+            return
+        footer, ok = QInputDialog.getText(self, "Add Header/Footer", "Footer text:")
+        if ok:
+            self._document_view.apply_header_footer(header, footer)
+
+    def _edit_toc(self) -> None:
+        from app.ui.panels.toc_editor_dialog import TocEditorDialog
+
+        dv = self._document_view
+        dialog = TocEditorDialog(dv.pdf.get_toc(), dv.pdf.page_count, self)
+        if dialog.exec():
+            dv.pdf.set_toc(dialog.result_toc())
+
     def _on_undo_state_changed(self, can_undo: bool, can_redo: bool) -> None:
         self._undo_action.setEnabled(can_undo)
         self._redo_action.setEnabled(can_redo)
@@ -143,6 +303,8 @@ class MainWindow(QMainWindow):
             self._export_to(path)
 
     def _export_to(self, path: str) -> None:
+        if path == self._document_view.pdf.path:
+            self._document_view.notify_saving()
         try:
             self._document_view.pdf.export(path, self._document_view.markup_document.all_objects())
         except Exception as exc:
