@@ -1,0 +1,64 @@
+name: Windows build
+
+# Builds the Windows .exe and installer (Blueprint v2, Section 10 Phase 10).
+# This runs on a real Windows runner because PyInstaller cannot cross-compile
+# a Windows binary from Linux/macOS — see docs/progress.md's installer notes.
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install project dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install pyinstaller
+
+      - name: Run test suite
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: pytest -q
+
+      - name: Build with PyInstaller
+        run: pyinstaller packaging/pdf_pro.spec --noconfirm
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Build installer
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" packaging\installer.iss
+
+      - name: Upload raw app (unpacked)
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDFPro-windows-app
+          path: dist/PDF Pro/
+          if-no-files-found: error
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDFPro-Setup
+          path: packaging/installer_output/PDFPro-Setup.exe
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: packaging/installer_output/PDFPro-Setup.exe

@@ -13,7 +13,7 @@ Tracks completion of the phases in `docs/blueprint/pdf_pro_development_blueprint
 | 6 — Document & Page Management + Markups List | ✅ Done | Insert/delete/rotate/move/extract/merge/split, Bates/watermark/header-footer, TOC editor, external file-change detection, SQLite-backed Markups List |
 | 7 — Forms, Redaction, Security, Signatures | ✅ Done | AcroForm fields (real fillable widgets), draw/type signature, redaction verified to destroy content (Section 11.3), password protection/permissions, metadata scrub, XFDF import/export |
 | 8 — OCR, Search, Compare, Search-and-Redact | ✅ Done | Local OCR via PyMuPDF/Tesseract, document search + find & replace, visual document compare, search-and-redact-all-instances |
-| Windows installer | ⬜ Not started | |
+| Windows installer | ✅ Done | PyInstaller spec + Inno Setup script, built by CI on a real `windows-latest` runner |
 
 ## Phase 1 detail
 
@@ -104,4 +104,14 @@ Tracks completion of the phases in `docs/blueprint/pdf_pro_development_blueprint
 - `app/ui/panels/search_dialog.py`, `compare_dialog.py` — functional (not just stubbed) dialogs wired into a new **Tools** menu (Search…, Search & Redact…, OCR Document…, Compare Documents…) in `MainWindow`.
 - **Bug caught by the test suite, not shipped:** `SearchDialog._run_replace_all()` originally showed a modal `QMessageBox.information()` after replacing — which blocks on `.exec()` waiting for a click that never comes in an automated/headless context, hanging the test (and would hang any scripted/automated use of the dialog). Replaced with inline feedback in the dialog's own results label; no functionality lost, one fewer interruption for the user.
 - Tests: `tests/unit/test_ocr.py` (a real scanned-image-only fixture — no extractable text — recovered via OCR, both in-memory and as a saved searchable PDF verified with `search_page()`), `test_search_service.py` (literal/regex search, find & replace verified on the *exported* PDF, search-and-redact as one undo step with a destruction check matching Section 11.3's rigor), `test_compare_service.py` (identical/changed/blank pages, mismatched page counts, mismatched page sizes), plus `tests/integration/test_search_and_compare_dialogs.py`. 166 tests passing. Also verified with a full manual smoke run through `MainWindow`-equivalent code paths: search, find & replace, search-and-redact an SSN pattern (verified destroyed in the exported PDF), OCR a scanned page into a searchable one, and compare two versions of a document.
+
+## Windows installer
+
+This session runs on Linux, and PyInstaller cannot cross-compile a Windows `.exe` — it has to run on Windows. Solved with CI instead of skipping it:
+
+- `packaging/pdf_pro.spec` — PyInstaller spec targeting `app/main.py`, with explicit `hiddenimports` for `pymupdf`, `PyQt6.sip`, and `PyQt6.QtPrintSupport` (not always caught by PyInstaller's static import scan). **Validated in this session** with a real PyInstaller build on Linux (producing a Linux ELF, not a `.exe`, but exercising the exact same Analysis graph): it completed with no missing-module errors, and the resulting binary launched cleanly under `QT_QPA_PLATFORM=offscreen` with no import tracebacks — the strongest check available without a Windows machine, catching spec/hidden-import mistakes before they'd otherwise only surface on a slower CI cycle.
+- `packaging/installer.iss` — an Inno Setup script wrapping the PyInstaller output into `PDFPro-Setup.exe` (Start Menu entry, optional desktop shortcut, uninstaller).
+- `.github/workflows/windows-build.yml` — runs on `windows-latest` on every push (and `workflow_dispatch`): installs deps, **runs the full test suite**, builds with PyInstaller, builds the installer with Inno Setup (via `choco install innosetup`), and uploads both the raw app and the installer as workflow artifacts. A `v*` tag also attaches the installer to a GitHub Release.
+- **Scope decision, documented rather than silently either broken or over-engineered:** Tesseract (needed for OCR, Phase 8) is not bundled into the installer — it would add real weight/complexity (extra files, telling PyMuPDF where `tessdata` lives at runtime) for a feature most internal-alpha users won't touch first. Every other feature works with zero extra setup after running the installer; OCR needs a separate Tesseract install, documented in `packaging/README.md` and the main README.
+- See `packaging/README.md` for what each CI artifact is and how to build locally on Windows.
 

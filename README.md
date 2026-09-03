@@ -42,6 +42,14 @@ Requires Python 3.11+. **For OCR** (Tools → OCR Document…, and searching sca
 
 Every other feature works without it.
 
+## Windows build
+
+`.github/workflows/windows-build.yml` builds a Windows `.exe` and installer
+on every push (a `windows-latest` GitHub Actions runner — PyInstaller can't
+cross-compile Windows binaries from Linux/macOS). Download from that run's
+Artifacts, or see [`packaging/README.md`](packaging/README.md) for what each
+artifact is and how to build locally on Windows.
+
 ## Repository layout
 
 See Section 5 of the blueprint for the rationale. Summary:

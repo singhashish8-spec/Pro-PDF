@@ -12,8 +12,12 @@ dist/
 .mypy_cache/
 .ruff_cache/
 
-# PDF Pro autosave journal sidecars (ADR 0004)
+# PDF Pro autosave journal sidecars (ADR 0004) and Markups List DB (Section 4)
 *.pdfpro-journal
+*.pdfpro-markups.db
+
+# Windows packaging output (built by .github/workflows/windows-build.yml)
+packaging/installer_output/
 
 # Editor/OS
 .vscode/
