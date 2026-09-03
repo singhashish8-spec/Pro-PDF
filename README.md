@@ -2,7 +2,15 @@
 
 Internal R&D desktop PDF editor for AEC (architecture/engineering/construction) workflows — a Figma/Notion-styled markup and takeoff tool, built first for the AEC wedge before broader Acrobat-style features.
 
-**Status:** Internal use only. No external distribution, no outside contributor access, during this phase.
+**Status:** Internal use only. No external distribution, no outside contributor access, during this phase. Build progress against the phased roadmap: see [`docs/progress.md`](docs/progress.md).
+
+## Run it
+
+```bash
+./scripts/setup_dev_env.sh
+source .venv/bin/activate
+pdf-pro
+```
 
 ## Start here
 
