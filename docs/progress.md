@@ -127,3 +127,16 @@ The first `windows-build.yml` run actually executed on `windows-latest` (not jus
 
 **Also fixed along the way:** `MainWindow._export_to()`'s plain Save path showed a blocking `QMessageBox.information()` on every save — fine for a human clicking through it once, but it hung a headless smoke script exercising repeated saves (the same class of bug as Phase 8's `SearchDialog` fix). A `Ctrl+S` should be quick and unintrusive anyway, so plain Save now confirms via the status bar (`Saved to <path>`, auto-clearing); `Save As` and the other one-off actions (Merge, Split, Export/Import Form Data, etc.) keep their modal confirmations, where a blocking acknowledgment is the normal, appropriate pattern for a rarer, deliberate action. Added `pytest-timeout` (`pyproject.toml`, 20s) so a reintroduced blocking-dialog bug — this is the second one found by a manual smoke run rather than the automated suite — fails fast and loud instead of hanging CI.
 
+Two more CI-only issues surfaced and were fixed the same way — real feedback from an actual Windows run, not guessed at:
+
+3. **Tesseract installed via `choco` wasn't visible to the next step.** Chocolatey's own log said as much: *"PATH environment variable does not have C:\Program Files\Tesseract-OCR in it. Adding... Environment Vars (like PATH) have changed. Close/reopen your shell to see the changes."* `choco` updates the machine PATH, but that never reaches the already-running GitHub Actions runner process — each step needs the new entry written to `$GITHUB_PATH` explicitly to carry forward. Fixed, plus added a `tesseract --version` verification step immediately after so a regression here fails fast and legibly instead of three steps later inside unrelated-looking pytest output.
+
+4. **`installer.iss`'s `[Files]` `Source:` path was wrong.** Got all the way through the test suite and the PyInstaller build before Inno Setup's compiler failed: `No files found matching D:\...\packaging\dist\PDF Pro\*`. Inno Setup resolves relative `Source:` paths against the `.iss` script's *own* directory (`packaging\`), not the working directory `ISCC` is invoked from — but PyInstaller writes to `dist\` at the repo root (no `--distpath` override), one level up from `packaging\`. Fixed: `Source: "..\dist\PDF Pro\*"`.
+
+**Result: the 4th CI run (commit `51d59eb`) succeeded end-to-end** — tests, PyInstaller build, Inno Setup compile, and artifact upload all green. Both artifacts are on that run (https://github.com/singhashish8-spec/Pro-PDF/actions/runs/33721982538):
+
+- **`PDFPro-Setup`** (~53.5 MB) — the installer (`PDFPro-Setup.exe`). This is the one to run and install.
+- **`PDFPro-windows-app`** (~77.8 MB) — the raw unpacked app, for running without installing.
+
+Four real, independent bugs — two in application code (the Windows save-lock, the blocking Save dialog) and two in the CI environment/packaging setup (Tesseract PATH, the installer's relative path) — caught and fixed by actually running the pipeline on Windows rather than stopping at "looks right" after local Linux validation.
+
