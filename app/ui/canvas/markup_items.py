@@ -165,6 +165,62 @@ def _build_callout(obj, scale) -> QGraphicsItem | None:
     return group
 
 
+def _label_item(text: str, pos: QPointF, obj: MarkupObject, scale: float) -> QGraphicsSimpleTextItem:
+    item = QGraphicsSimpleTextItem(text)
+    item.setPos(pos)
+    item.setBrush(QBrush(QColor(obj.style.stroke_color)))
+    font = QFont()
+    font.setPointSizeF(max(obj.style.font_size, 1.0) * scale / 1.33)
+    item.setFont(font)
+    return item
+
+
+def _build_measurement_line(obj, scale) -> QGraphicsItem | None:
+    line_item = _build_line_like(obj, scale)
+    if line_item is None or not obj.text:
+        return line_item
+    mid = ((obj.points[0][0] + obj.points[-1][0]) / 2, (obj.points[0][1] + obj.points[-1][1]) / 2)
+    label = _label_item(obj.text, QPointF(*pdf_to_scene(mid, scale)), obj, scale)
+    group = QGraphicsItemGroup()
+    group.addToGroup(line_item)
+    group.addToGroup(label)
+    return group
+
+
+def _build_measurement_polygon(obj, scale) -> QGraphicsItem | None:
+    poly_item = _build_polygon(obj, scale)
+    if poly_item is None or not obj.text or len(obj.points) < 3:
+        return poly_item
+    cx = sum(p[0] for p in obj.points) / len(obj.points)
+    cy = sum(p[1] for p in obj.points) / len(obj.points)
+    label = _label_item(obj.text, QPointF(*pdf_to_scene((cx, cy), scale)), obj, scale)
+    group = QGraphicsItemGroup()
+    group.addToGroup(poly_item)
+    group.addToGroup(label)
+    return group
+
+
+def _build_count_marker(obj, scale) -> QGraphicsItem | None:
+    if not obj.points:
+        return None
+    x, y = pdf_to_scene(obj.points[0], scale)
+    radius = 9.0
+    circle = QGraphicsEllipseItem(x - radius, y - radius, radius * 2, radius * 2)
+    color = QColor(obj.style.stroke_color or "#E8590C")
+    circle.setPen(QPen(color, 1.5))
+    circle.setBrush(QBrush(color.lighter(160)))
+    label = QGraphicsSimpleTextItem(obj.text or "")
+    label.setPos(x - radius / 2, y - radius / 1.5)
+    label.setBrush(QBrush(color.darker(150)))
+    font = QFont()
+    font.setPointSizeF(9)
+    label.setFont(font)
+    group = QGraphicsItemGroup()
+    group.addToGroup(circle)
+    group.addToGroup(label)
+    return group
+
+
 def _build_stamp(obj, scale) -> QGraphicsItem | None:
     if not obj.points:
         return None
@@ -203,9 +259,12 @@ _BUILDERS = {
     "strikeout": _build_line_like,
     "squiggly": _build_line_like,
     "cloud": _build_polygon,
-    "measure_linear": _build_line_like,
-    "measure_perimeter": _build_polygon,
-    "measure_area": _build_polygon,
+    "measure_linear": _build_measurement_line,
+    "measure_perimeter": _build_measurement_polygon,
+    "measure_area": _build_measurement_polygon,
+    "measure_diameter": _build_measurement_line,
+    "measure_radius": _build_measurement_line,
+    "measure_count": _build_count_marker,
     "redaction": _build_rectangle,
     "textbox": _build_text,
     "callout": _build_callout,

@@ -72,6 +72,39 @@ def _bake_callout(shape: "fitz.Shape", obj: MarkupObject) -> None:
         shape.insert_text(fitz.Point(*obj.points[1]), obj.text, fontsize=obj.style.font_size, color=color)
 
 
+def _bake_measurement_line(shape: "fitz.Shape", obj: MarkupObject) -> None:
+    _bake_polyline(shape, obj)
+    if obj.text and len(obj.points) >= 2:
+        mid = ((obj.points[0][0] + obj.points[-1][0]) / 2, (obj.points[0][1] + obj.points[-1][1]) / 2)
+        color = _color_to_rgb(obj.style.stroke_color) or (0, 0, 0)
+        shape.insert_text(fitz.Point(*mid), obj.text, fontsize=obj.style.font_size, color=color)
+
+
+def _bake_measurement_polygon(shape: "fitz.Shape", obj: MarkupObject) -> None:
+    if len(obj.points) < 3:
+        return
+    points = [fitz.Point(x, y) for x, y in obj.points] + [fitz.Point(*obj.points[0])]
+    shape.draw_polyline(points)
+    _finish(shape, obj, fill=obj.type == "measure_area")
+    if obj.text:
+        cx = sum(p[0] for p in obj.points) / len(obj.points)
+        cy = sum(p[1] for p in obj.points) / len(obj.points)
+        color = _color_to_rgb(obj.style.stroke_color) or (0, 0, 0)
+        shape.insert_text(fitz.Point(cx, cy), obj.text, fontsize=obj.style.font_size, color=color)
+
+
+def _bake_count_marker(shape: "fitz.Shape", obj: MarkupObject) -> None:
+    if not obj.points:
+        return
+    x, y = obj.points[0]
+    radius = 9.0
+    color = _color_to_rgb(obj.style.stroke_color) or (0.91, 0.35, 0.05)
+    shape.draw_circle(fitz.Point(x, y), radius)
+    shape.finish(color=color, fill=color, fill_opacity=0.35, width=1.5)
+    if obj.text:
+        shape.insert_text(fitz.Point(x - radius / 2, y + radius / 3), obj.text, fontsize=9, color=color)
+
+
 def _bake_text(shape: "fitz.Shape", obj: MarkupObject) -> None:
     if not obj.points or not obj.text:
         return
@@ -122,6 +155,12 @@ _BAKERS = {
     "strikeout": _bake_polyline,
     "squiggly": _bake_polyline,
     "cloud": _bake_polyline,
+    "measure_linear": _bake_measurement_line,
+    "measure_perimeter": _bake_measurement_polygon,
+    "measure_area": _bake_measurement_polygon,
+    "measure_diameter": _bake_measurement_line,
+    "measure_radius": _bake_measurement_line,
+    "measure_count": _bake_count_marker,
     "textbox": _bake_text,
     "callout": _bake_callout,
     "note": _bake_text,

@@ -18,16 +18,23 @@ from PyQt6.QtWidgets import (
 
 from app.commands.base import CommandStack
 from app.core.pdf_document import PDFDocument
-from app.models.markup import MarkupObject
+from app.models.markup import MarkupObject, Style
 from app.models.project import MarkupDocument
 from app.persistence import autosave
 from app.tools.arrow import ArrowTool
 from app.tools.base import Tool, ToolContext
+from app.tools.calibration_tool import CalibrationTool
 from app.tools.callout import CalloutTool
 from app.tools.cloud import CloudTool
 from app.tools.ellipse import EllipseTool
 from app.tools.eraser import EraserTool
 from app.tools.highlighter import HighlighterTool
+from app.tools.measure_area import MeasureAreaTool
+from app.tools.measure_count import MeasureCountTool
+from app.tools.measure_diameter import MeasureDiameterTool
+from app.tools.measure_linear import MeasureLinearTool
+from app.tools.measure_perimeter import MeasurePerimeterTool
+from app.tools.measure_radius import MeasureRadiusTool
 from app.tools.note import NoteTool
 from app.tools.pen import PenTool
 from app.tools.rectangle import RectangleTool
@@ -41,6 +48,7 @@ from app.ui.canvas.glass_scene import GlassScene
 from app.ui.canvas.pdf_view import PdfGraphicsView
 from app.ui.panels.command_palette import CommandPalette, PaletteCommand
 from app.ui.panels.floating_style_panel import FloatingStylePanel
+from app.ui.panels.tool_chest_panel import ToolChestPanel
 
 _DRAFTING_TOOLS = [
     ("Select", SelectTool, "S"),
@@ -60,6 +68,20 @@ _DRAFTING_TOOLS = [
     ("Eraser", EraserTool, "E"),
 ]
 
+_MEASUREMENT_TOOLS = [
+    ("Calibrate", CalibrationTool, "Shift+C"),
+    ("Distance", MeasureLinearTool, "D"),
+    ("Area", MeasureAreaTool, "Shift+A"),
+    ("Perimeter", MeasurePerimeterTool, "Shift+P"),
+    ("Diameter", MeasureDiameterTool, "Shift+D"),
+    ("Radius", MeasureRadiusTool, "Shift+R"),
+    ("Count", MeasureCountTool, "Shift+N"),
+]
+
+#: Tools that build up a shape across several clicks, finished with Return/Enter
+#: or discarded with Escape (DocumentView._on_finish_key / _on_escape).
+_CLICK_TO_BUILD_TOOLS = (CloudTool, MeasureAreaTool, MeasurePerimeterTool)
+
 
 class DocumentView(QWidget):
     undo_state_changed = pyqtSignal(bool, bool)  # can_undo, can_redo
@@ -73,6 +95,9 @@ class DocumentView(QWidget):
         self._page_index = 0
         self._active_tool: Tool | None = None
         self._suspend_autosave = False
+        self._default_style = Style()
+        #: Per-page id of the calibration measurement tools should use (Section 7.2).
+        self._active_calibration_by_page: dict[int, str] = {}
 
         self.scene = GlassScene()
         self.view = PdfGraphicsView()
@@ -156,6 +181,16 @@ class DocumentView(QWidget):
         zoom_in.clicked.connect(lambda: self._on_zoom_requested(self.view.zoom * 1.15))
         bar.addWidget(zoom_in)
 
+        self._scale_combo = QComboBox()
+        self._scale_combo.setToolTip("Active scale for measurement tools on this page")
+        self._scale_combo.currentIndexChanged.connect(self._on_scale_combo_changed)
+        bar.addWidget(self._scale_combo)
+
+        tool_chest_btn = QToolButton()
+        tool_chest_btn.setText("Tool Chest")
+        tool_chest_btn.clicked.connect(self.open_tool_chest)
+        bar.addWidget(tool_chest_btn)
+
     def _build_tool_palette(self) -> None:
         self._tool_palette = QWidget()
         self._tool_palette.setObjectName("RightPanel")
@@ -167,7 +202,7 @@ class DocumentView(QWidget):
         self._tool_buttons: dict[type, QToolButton] = {}
         group = QButtonGroup(self._tool_palette)
         group.setExclusive(True)
-        for label, tool_cls, shortcut in _DRAFTING_TOOLS:
+        for label, tool_cls, shortcut in _DRAFTING_TOOLS + _MEASUREMENT_TOOLS:
             btn = QToolButton()
             btn.setText(label[:2])
             btn.setToolTip(f"{label} ({shortcut})")
@@ -195,12 +230,12 @@ class DocumentView(QWidget):
         self.activate_tool(tool_cls, **kwargs)
 
     def _on_escape(self) -> None:
-        if isinstance(self._active_tool, CloudTool):
+        if isinstance(self._active_tool, _CLICK_TO_BUILD_TOOLS):
             self._active_tool.cancel()
         self.select_tool(SelectTool)
 
     def _on_finish_key(self) -> None:
-        if isinstance(self._active_tool, CloudTool):
+        if isinstance(self._active_tool, _CLICK_TO_BUILD_TOOLS):
             self._active_tool.finish()
 
     def _on_delete_key(self) -> None:
@@ -251,6 +286,7 @@ class DocumentView(QWidget):
         self._page_spin.setValue(index + 1)
         self._page_spin.blockSignals(False)
         self._render_current_page()
+        self._refresh_scale_combo()
         self.page_changed.emit(index, self.pdf.page_count)
 
     @property
@@ -283,6 +319,7 @@ class DocumentView(QWidget):
         self.undo_state_changed.emit(self.command_stack.can_undo, self.command_stack.can_redo)
         self._write_autosave()
         self.refresh_floating_panel()
+        self._refresh_scale_combo()
 
     # -- tools -----------------------------------------------------------
     def set_active_tool(self, tool: Tool | None) -> None:
@@ -304,18 +341,64 @@ class DocumentView(QWidget):
         return self._active_tool
 
     def make_tool_context(self) -> ToolContext:
-        from app.models.markup import Style
-
+        calibration_id = self._active_calibration_by_page.get(self._page_index)
+        calibration = self.markup_document.get_calibration(calibration_id) if calibration_id else None
         return ToolContext(
             document=self.markup_document,
             command_stack=self.command_stack,
             page_index=self._page_index,
-            default_style=Style(),
+            default_style=self._default_style,
             pdf=self.pdf,
             text_provider=self.prompt_for_text,
             preview_callback=self.scene.set_preview,
             selection_callback=self._on_selection_changed,
+            active_calibration=calibration,
         )
+
+    # -- scale calibration ---------------------------------------------------
+    def _refresh_scale_combo(self) -> None:
+        calibrations = self.markup_document.calibrations_for_page(self._page_index)
+        self._scale_combo.blockSignals(True)
+        self._scale_combo.clear()
+        self._scale_combo.addItem("No scale", None)
+        current_id = self._active_calibration_by_page.get(self._page_index)
+        current_row = 0
+        for i, cal in enumerate(calibrations, start=1):
+            self._scale_combo.addItem(f"{cal.real_distance:g} {cal.unit} = {cal.pdf_distance:.1f} pt", cal.id)
+            if cal.id == current_id:
+                current_row = i
+        if current_row == 0 and calibrations:
+            # Newest calibration becomes active automatically.
+            current_row = len(calibrations)
+            self._active_calibration_by_page[self._page_index] = calibrations[-1].id
+        self._scale_combo.setCurrentIndex(current_row)
+        self._scale_combo.blockSignals(False)
+
+    def _on_scale_combo_changed(self, index: int) -> None:
+        calibration_id = self._scale_combo.itemData(index)
+        if calibration_id:
+            self._active_calibration_by_page[self._page_index] = calibration_id
+        else:
+            self._active_calibration_by_page.pop(self._page_index, None)
+
+    # -- tool chest -----------------------------------------------------------
+    def open_tool_chest(self) -> None:
+        def on_apply(entry: dict) -> None:
+            style = entry.get("style") or {}
+            for key, value in style.items():
+                if hasattr(self._default_style, key):
+                    setattr(self._default_style, key, value)
+            markup_type = entry.get("markup_type")
+            tool_cls = next((tc for label, tc, _ in _DRAFTING_TOOLS + _MEASUREMENT_TOOLS if tc.tool_id == markup_type), None)
+            if tool_cls is not None:
+                self.select_tool(tool_cls)
+
+        def current_style_provider() -> tuple[str, dict]:
+            tool_id = getattr(self._active_tool, "tool_id", "rectangle")
+            return tool_id, self._default_style.to_dict()
+
+        panel = ToolChestPanel(on_apply, current_style_provider, self)
+        panel.exec()
 
     def _on_selection_changed(self, obj_id: str | None) -> None:
         if obj_id is None:
@@ -347,7 +430,7 @@ class DocumentView(QWidget):
         commands = [
             PaletteCommand("Select", lambda: self.select_tool(SelectTool), "Tool"),
         ]
-        for label, tool_cls, _shortcut in _DRAFTING_TOOLS[1:]:
+        for label, tool_cls, _shortcut in _DRAFTING_TOOLS[1:] + _MEASUREMENT_TOOLS:
             commands.append(PaletteCommand(label, lambda tc=tool_cls: self.select_tool(tc), "Tool"))
         commands += [
             PaletteCommand("Undo", self.command_stack.undo, "Edit"),

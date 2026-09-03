@@ -34,6 +34,8 @@ MARKUP_TYPES = (
     "measure_area",
     "measure_count",
     "measure_perimeter",
+    "measure_diameter",
+    "measure_radius",
     "redaction",
 )
 

@@ -14,7 +14,7 @@ from typing import Callable
 from app.commands.base import CommandStack
 from app.core.pdf_document import PDFDocument
 from app.models.markup import Style
-from app.models.project import MarkupDocument
+from app.models.project import Calibration, MarkupDocument
 
 #: Prompts the user for text given a dialog title; returns None if cancelled.
 TextProvider = Callable[[str], "str | None"]
@@ -35,6 +35,8 @@ class ToolContext:
     preview_callback: PreviewCallback
     selection_callback: SelectionCallback = lambda obj_id: None
     author: str = "user"
+    #: The scale (Section 7.2) measurement tools should use for the current page, if any has been set.
+    active_calibration: "Calibration | None" = None
 
 
 class Tool(ABC):

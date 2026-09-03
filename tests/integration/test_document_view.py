@@ -1,7 +1,12 @@
+import pytest
+
 from app.commands.object_commands import AddObjectCommand
 from app.models.markup import MarkupObject
 from app.persistence import autosave
+from app.tools.calibration_tool import CalibrationTool
 from app.tools.cloud import CloudTool
+from app.tools.measure_area import MeasureAreaTool
+from app.tools.measure_linear import MeasureLinearTool
 from app.tools.rectangle import RectangleTool
 from app.tools.select_tool import SelectTool
 from app.ui.canvas.document_view import DocumentView
@@ -166,3 +171,49 @@ def test_command_palette_opens_and_lists_tools(qapp, make_pdf):
     assert "Rectangle" in labels
     assert "Undo" in labels
     assert "Zoom In" in labels
+    assert "Distance" in labels
+    assert "Calibrate" in labels
+
+
+def test_calibration_flows_into_measurement_tools(qapp, make_pdf):
+    path = make_pdf(page_count=1)
+    view = DocumentView()
+    view.load(path)
+
+    # "No scale" is the only entry before any calibration is set.
+    assert view._scale_combo.count() == 1
+
+    view.prompt_for_text = lambda title: "10 ft"
+    view.select_tool(CalibrationTool)
+    view.active_tool.on_press((0, 0))
+    view.active_tool.on_release((100, 0))  # 100 pdf pts = 10 ft -> scale_factor 0.1
+
+    # New calibration is picked up automatically and offered in the combo.
+    assert view._scale_combo.count() == 2
+    assert view._active_calibration_by_page[0] is not None
+
+    view.select_tool(MeasureLinearTool)
+    view.active_tool.on_press((0, 0))
+    view.active_tool.on_release((50, 0))  # 50 pdf pts * 0.1 = 5 ft
+    obj = [o for o in view.markup_document.all_objects() if o.type == "measure_linear"][0]
+    assert obj.measurement.value == pytest.approx(5.0)
+    assert obj.measurement.unit == "ft"
+    view.pdf.close()
+
+
+def test_finish_key_also_drives_measure_area_tool(qapp, make_pdf):
+    path = make_pdf(page_count=1)
+    view = DocumentView()
+    view.load(path)
+
+    view.select_tool(MeasureAreaTool)
+    view.active_tool.on_press((0, 0))
+    view.active_tool.on_press((10, 0))
+    view.active_tool.on_press((10, 10))
+    view.active_tool.on_press((0, 10))
+    view._on_finish_key()
+
+    obj = view.markup_document.all_objects()[0]
+    assert obj.type == "measure_area"
+    assert obj.measurement.value == pytest.approx(100.0)
+    view.pdf.close()
