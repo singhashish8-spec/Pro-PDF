@@ -29,7 +29,15 @@ jobs:
           pip install pyinstaller
 
       - name: Install Tesseract (for the test suite's OCR tests)
-        run: choco install tesseract -y --no-progress
+        run: |
+          choco install tesseract -y --no-progress
+          # choco updates the machine PATH, but that doesn't reach the
+          # already-running runner process — GITHUB_PATH is what actually
+          # makes it visible to subsequent steps.
+          "C:\Program Files\Tesseract-OCR" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Verify Tesseract is on PATH
+        run: tesseract --version
 
       - name: Run test suite
         env:
